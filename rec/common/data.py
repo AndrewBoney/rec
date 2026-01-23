@@ -1,0 +1,64 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Dict
+
+import pandas as pd
+import torch
+
+from .utils import CategoryEncoder, FeatureConfig, encode_dataframe
+
+
+@dataclass
+class DataPaths:
+    users_path: str
+    items_path: str
+    interactions_path: str
+
+
+class FeatureStore:
+    def __init__(
+        self,
+        user_df: pd.DataFrame,
+        item_df: pd.DataFrame,
+        user_encoders: Dict[str, CategoryEncoder],
+        item_encoders: Dict[str, CategoryEncoder],
+        feature_cfg: FeatureConfig,
+    ) -> None:
+        self.feature_cfg = feature_cfg
+        self.user_features = encode_dataframe(
+            user_df,
+            user_encoders,
+            [feature_cfg.user_id_col] + feature_cfg.user_cat_cols,
+        )
+        self.item_features = encode_dataframe(
+            item_df,
+            item_encoders,
+            [feature_cfg.item_id_col] + feature_cfg.item_cat_cols,
+        )
+
+        self.user_features = {
+            k: torch.cat([torch.zeros(1, dtype=v.dtype), v]) for k, v in self.user_features.items()
+        }
+        self.item_features = {
+            k: torch.cat([torch.zeros(1, dtype=v.dtype), v]) for k, v in self.item_features.items()
+        }
+
+        user_id_tensor = self.user_features[feature_cfg.user_id_col][1:]
+        item_id_tensor = self.item_features[feature_cfg.item_id_col][1:]
+        self.user_index: Dict[int, int] = {
+            int(uid): idx + 1 for idx, uid in enumerate(user_id_tensor.tolist())
+        }
+        self.item_index: Dict[int, int] = {
+            int(iid): idx + 1 for idx, iid in enumerate(item_id_tensor.tolist())
+        }
+
+    def get_user_features(self, user_ids: torch.Tensor) -> Dict[str, torch.Tensor]:
+        indices = [self.user_index.get(int(uid), 0) for uid in user_ids.tolist()]
+        indices = torch.tensor(indices, dtype=torch.long)
+        return {k: v[indices] for k, v in self.user_features.items()}
+
+    def get_item_features(self, item_ids: torch.Tensor) -> Dict[str, torch.Tensor]:
+        indices = [self.item_index.get(int(iid), 0) for iid in item_ids.tolist()]
+        indices = torch.tensor(indices, dtype=torch.long)
+        return {k: v[indices] for k, v in self.item_features.items()}
