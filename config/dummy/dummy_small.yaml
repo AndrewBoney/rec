@@ -1,0 +1,40 @@
+dataset:
+  name: dummy
+  paths:
+    users: data/dummy/users.csv
+    items: data/dummy/items.csv
+    interactions: data/dummy/interactions.csv
+  columns:
+    user_id: user_id
+    item_id: item_id
+    user_cat_cols:
+      - user_group
+      - region
+      - age
+    item_cat_cols:
+      - category
+      - price_band
+      - style
+    interaction_user_col: user_id
+    interaction_item_col: item_id
+    interaction_time_col: timestamp
+
+model:
+  embedding_dim: 64
+  hidden_dims:
+    - 128
+    - 64
+  dropout: 0.1
+
+training:
+  batch_size: 1024
+  num_workers: 0
+  chunksize: 200000
+  max_epochs: 3
+  seed: 42
+  lr: 0.001
+  temperature: 0.05
+  negatives_per_pos: 4
+  encoder_cache: encoders.json
+  retrieval_checkpoint: retrieval.ckpt
+  ranking_checkpoint: ranking.ckpt

@@ -131,3 +131,4 @@ Thumbs.db
 .env
 *.zip
 *.csv
+data/

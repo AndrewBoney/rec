@@ -5,7 +5,7 @@ import argparse
 from .retrieval import train as retrieval_train
 from .ranking import train as ranking_train
 
-
+# Build argument parser
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train retrieval then ranking")
     parser.add_argument("--users", required=True)
