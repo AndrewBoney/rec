@@ -19,22 +19,38 @@ dataset:
     interaction_item_col: item_id
     interaction_time_col: timestamp
 
-model:
-  embedding_dim: 64
-  hidden_dims:
-    - 128
-    - 64
-  dropout: 0.1
-
-training:
-  batch_size: 1024
-  num_workers: 0
-  chunksize: 200000
-  max_epochs: 3
+shared:
   seed: 42
-  lr: 0.001
-  temperature: 0.05
-  negatives_per_pos: 4
   encoder_cache: encoders.json
-  retrieval_checkpoint: retrieval.ckpt
-  ranking_checkpoint: ranking.ckpt
+
+retrieval:
+  model:
+    embedding_dim: 64
+    hidden_dims:
+      - 128
+      - 64
+    dropout: 0.1
+  training:
+    batch_size: 1024
+    num_workers: 0
+    chunksize: 200000
+    max_epochs: 3
+    lr: 0.001
+    temperature: 0.05
+    checkpoint: retrieval.ckpt
+
+ranking:
+  model:
+    embedding_dim: 64
+    hidden_dims:
+      - 128
+      - 64
+    dropout: 0.1
+  training:
+    batch_size: 1024
+    num_workers: 0
+    chunksize: 200000
+    max_epochs: 3
+    lr: 0.001
+    negatives_per_pos: 4
+    checkpoint: ranking.ckpt
