@@ -13,6 +13,7 @@ from ..common.config import (
     apply_shared_config,
     apply_stage_config,
     build_base_parser,
+    ensure_dataset_args,
     load_yaml_config,
 )
 from ..common.data import DataPaths
@@ -54,7 +55,7 @@ def build_cardinalities(encoders: Dict[str, CategoryEncoder], cols) -> Dict[str,
 
 
 def _load_retrieval_state(path: str) -> Dict[str, torch.Tensor]:
-    ckpt = torch.load(path, map_location="cpu")
+    ckpt = torch.load(path, map_location="cpu", weights_only=False)
     if isinstance(ckpt, dict) and "state_dict" in ckpt:
         return ckpt["state_dict"]
     if isinstance(ckpt, dict):
@@ -133,6 +134,7 @@ def train(args: argparse.Namespace) -> str:
 def main() -> None:
     args = parse_args()
     args = apply_config(args)
+    args = ensure_dataset_args(args)
     train(args)
 
 

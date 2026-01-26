@@ -13,6 +13,7 @@ from ..common.config import (
     apply_shared_config,
     apply_stage_config,
     build_base_parser,
+    ensure_dataset_args,
     load_yaml_config,
 )
 from ..common.data import DataPaths
@@ -120,6 +121,7 @@ def train(args: argparse.Namespace) -> str:
 def main() -> None:
     args = parse_args()
     args = apply_config(args)
+    args = ensure_dataset_args(args)
     train(args)
 
 

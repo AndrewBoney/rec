@@ -9,6 +9,7 @@ from .common.config import (
     apply_shared_config,
     apply_stage_config,
     build_base_parser,
+    ensure_dataset_args,
     load_yaml_config,
 )
 from .retrieval import train as retrieval_train
@@ -17,8 +18,10 @@ from .ranking import train as ranking_train
 # Build argument parser
 def parse_args() -> argparse.Namespace:
     parser = build_base_parser("Train retrieval then ranking")
-    add_retrieval_args(parser)
-    add_ranking_args(parser)
+    add_retrieval_args(parser, include_checkpoint=False)
+    add_ranking_args(parser, include_checkpoint=False)
+    parser.add_argument("--retrieval-checkpoint", default="retrieval.ckpt")
+    parser.add_argument("--ranking-checkpoint", default="ranking.ckpt")
     return parser.parse_args()
 
 
@@ -37,14 +40,17 @@ def main() -> None:
     if cfg:
         args = apply_dataset_config(args, cfg)
         args = apply_shared_config(args, cfg)
+    args = ensure_dataset_args(args)
 
     retrieval_args = argparse.Namespace(**vars(args))
+    retrieval_args.save_checkpoint = args.retrieval_checkpoint
     if cfg:
         retrieval_args = apply_stage_config(retrieval_args, cfg, "retrieval")
 
     retrieval_ckpt = retrieval_train.train(retrieval_args)
 
     ranking_args = argparse.Namespace(**vars(args))
+    ranking_args.save_checkpoint = args.ranking_checkpoint
     if cfg:
         ranking_args = apply_stage_config(ranking_args, cfg, "ranking")
     ranking_args.init_from_retrieval = retrieval_ckpt

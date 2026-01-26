@@ -9,9 +9,9 @@ from .utils import load_config
 def build_base_parser(description: str) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=description)
     parser.add_argument("--config", default=None, help="Path to YAML config file")
-    parser.add_argument("--users", required=True)
-    parser.add_argument("--items", required=True)
-    parser.add_argument("--interactions", required=True)
+    parser.add_argument("--users", required=False)
+    parser.add_argument("--items", required=False)
+    parser.add_argument("--interactions", required=False)
     parser.add_argument("--user-id-col", default="customer_id")
     parser.add_argument("--item-id-col", default="article_id")
     parser.add_argument("--user-cat-cols", nargs="*", default=["FN", "Active", "club_member_status", "fashion_news_frequency", "age"])
@@ -20,10 +20,6 @@ def build_base_parser(description: str) -> argparse.ArgumentParser:
     parser.add_argument("--interaction-item-col", default="article_id")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--encoder-cache", default="encoders.json")
-    return parser
-
-
-def add_retrieval_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     parser.add_argument("--batch-size", type=int, default=1024)
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--chunksize", type=int, default=200_000)
@@ -32,23 +28,21 @@ def add_retrieval_args(parser: argparse.ArgumentParser) -> argparse.ArgumentPars
     parser.add_argument("--hidden-dims", nargs="*", type=int, default=[128, 64])
     parser.add_argument("--dropout", type=float, default=0.1)
     parser.add_argument("--lr", type=float, default=1e-3)
+    return parser
+
+
+def add_retrieval_args(parser: argparse.ArgumentParser, include_checkpoint: bool = True) -> argparse.ArgumentParser:
     parser.add_argument("--temperature", type=float, default=0.05)
-    parser.add_argument("--save-checkpoint", default="retrieval.ckpt")
+    if include_checkpoint:
+        parser.add_argument("--save-checkpoint", default="retrieval.ckpt")
     return parser
 
 
-def add_ranking_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
-    parser.add_argument("--batch-size", type=int, default=1024)
-    parser.add_argument("--num-workers", type=int, default=0)
-    parser.add_argument("--chunksize", type=int, default=200_000)
-    parser.add_argument("--max-epochs", type=int, default=3)
-    parser.add_argument("--embedding-dim", type=int, default=64)
-    parser.add_argument("--hidden-dims", nargs="*", type=int, default=[128, 64])
-    parser.add_argument("--dropout", type=float, default=0.1)
-    parser.add_argument("--lr", type=float, default=1e-3)
+def add_ranking_args(parser: argparse.ArgumentParser, include_checkpoint: bool = True) -> argparse.ArgumentParser:
     parser.add_argument("--negatives-per-pos", type=int, default=4)
     parser.add_argument("--init-from-retrieval", default=None)
-    parser.add_argument("--save-checkpoint", default="ranking.ckpt")
+    if include_checkpoint:
+        parser.add_argument("--save-checkpoint", default="ranking.ckpt")
     return parser
 
 
@@ -110,4 +104,11 @@ def apply_stage_config(args: argparse.Namespace, cfg: Dict[str, Any], stage: str
     if "checkpoint" in training_cfg:
         args.save_checkpoint = training_cfg["checkpoint"]
 
+    return args
+
+
+def ensure_dataset_args(args: argparse.Namespace) -> argparse.Namespace:
+    missing = [name for name in ("users", "items", "interactions") if not getattr(args, name, None)]
+    if missing:
+        raise ValueError(f"Missing required dataset args: {', '.join(missing)}")
     return args

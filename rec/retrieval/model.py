@@ -32,8 +32,10 @@ class TwoTowerRetrieval(lit.LightningModule):
         return scores
 
     def training_step(self, batch: Dict[str, torch.Tensor], batch_idx: int) -> torch.Tensor:
-        user_features = {k.replace("user_", ""): v for k, v in batch.items() if k.startswith("user_")}
-        item_features = {k.replace("item_", ""): v for k, v in batch.items() if k.startswith("item_")}
+        user_prefix = "user_"
+        item_prefix = "item_"
+        user_features = {k[len(user_prefix):]: v for k, v in batch.items() if k.startswith(user_prefix)}
+        item_features = {k[len(item_prefix):]: v for k, v in batch.items() if k.startswith(item_prefix)}
         scores = self.forward(user_features, item_features) / self.temperature
         labels = torch.arange(scores.size(0), device=scores.device)
         loss = F.cross_entropy(scores, labels)

@@ -139,9 +139,9 @@ def generate_dummy_data(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate dummy recommender datasets")
     parser.add_argument("--output-dir", default="data/dummy")
-    parser.add_argument("--n-users", type=int, default=1000)
-    parser.add_argument("--n-items", type=int, default=1000)
-    parser.add_argument("--n-interactions", type=int, default=10000)
+    parser.add_argument("--n-users", type=int, default=10000)
+    parser.add_argument("--n-items", type=int, default=2000)
+    parser.add_argument("--n-interactions", type=int, default=100000)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--chunk-size", type=int, default=200_000)
     return parser.parse_args()

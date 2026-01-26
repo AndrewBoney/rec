@@ -132,3 +132,6 @@ Thumbs.db
 *.zip
 *.csv
 data/
+lightning_logs/
+*.json*
+*.ckpt
