@@ -60,24 +60,42 @@ def train(args: argparse.Namespace) -> str:
     feature_cfg = build_feature_config(args)
     encoder_cache_path = args.encoder_cache
 
+    user_cols = [feature_cfg.user_id_col] + feature_cfg.user_cat_cols
+    item_cols = [feature_cfg.item_id_col] + feature_cfg.item_cat_cols
+
     if os.path.exists(encoder_cache_path + ".users") and os.path.exists(encoder_cache_path + ".items"):
         user_encoders = load_encoders(encoder_cache_path + ".users")
         item_encoders = load_encoders(encoder_cache_path + ".items")
+        missing_user = [col for col in user_cols if col not in user_encoders]
+        missing_item = [col for col in item_cols if col not in item_encoders]
+        if missing_user or missing_item:
+            user_encoders, item_encoders = build_category_maps(
+                args.users,
+                args.items,
+                args.interactions_train,
+                feature_cfg,
+                chunksize=args.chunksize,
+            )
+            save_encoders(encoder_cache_path + ".users", user_encoders)
+            save_encoders(encoder_cache_path + ".items", item_encoders)
     else:
         user_encoders, item_encoders = build_category_maps(
             args.users,
             args.items,
-            args.interactions,
+            args.interactions_train,
             feature_cfg,
             chunksize=args.chunksize,
         )
         save_encoders(encoder_cache_path + ".users", user_encoders)
         save_encoders(encoder_cache_path + ".items", item_encoders)
 
-    paths = DataPaths(args.users, args.items, args.interactions)
+    paths = DataPaths(
+        users_path=args.users,
+        items_path=args.items,
+        interactions_train_path=args.interactions_train,
+        interactions_val_path=args.interactions_val,
+    )
 
-    user_cols = [feature_cfg.user_id_col] + feature_cfg.user_cat_cols
-    item_cols = [feature_cfg.item_id_col] + feature_cfg.item_cat_cols
     user_cardinalities = build_cardinalities(user_encoders, user_cols)
     item_cardinalities = build_cardinalities(item_encoders, item_cols)
 

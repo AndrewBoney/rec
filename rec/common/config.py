@@ -11,7 +11,8 @@ def build_base_parser(description: str) -> argparse.ArgumentParser:
     parser.add_argument("--config", default=None, help="Path to YAML config file")
     parser.add_argument("--users", required=False)
     parser.add_argument("--items", required=False)
-    parser.add_argument("--interactions", required=False)
+    parser.add_argument("--interactions-train", required=False)
+    parser.add_argument("--interactions-val", required=False)
     parser.add_argument("--user-id-col", default="customer_id")
     parser.add_argument("--item-id-col", default="article_id")
     parser.add_argument("--user-cat-cols", nargs="*", default=["FN", "Active", "club_member_status", "fashion_news_frequency", "age"])
@@ -59,7 +60,8 @@ def apply_dataset_config(args: argparse.Namespace, cfg: Dict[str, Any]) -> argpa
 
     args.users = paths.get("users", args.users)
     args.items = paths.get("items", args.items)
-    args.interactions = paths.get("interactions", args.interactions)
+    args.interactions_train = paths.get("interactions_train", args.interactions_train)
+    args.interactions_val = paths.get("interactions_val", args.interactions_val)
 
     args.user_id_col = columns.get("user_id", args.user_id_col)
     args.item_id_col = columns.get("item_id", args.item_id_col)
@@ -108,7 +110,11 @@ def apply_stage_config(args: argparse.Namespace, cfg: Dict[str, Any], stage: str
 
 
 def ensure_dataset_args(args: argparse.Namespace) -> argparse.Namespace:
-    missing = [name for name in ("users", "items", "interactions") if not getattr(args, name, None)]
+    missing = [name for name in ("users", "items") if not getattr(args, name, None)]
     if missing:
         raise ValueError(f"Missing required dataset args: {', '.join(missing)}")
+    if not args.interactions_train:
+        raise ValueError("Missing required dataset args: interactions_train")
+    if not args.interactions_val:
+        raise ValueError("Missing required dataset args: interactions_val")
     return args

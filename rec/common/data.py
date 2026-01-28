@@ -13,7 +13,8 @@ from .utils import CategoryEncoder, FeatureConfig, encode_dataframe
 class DataPaths:
     users_path: str
     items_path: str
-    interactions_path: str
+    interactions_train_path: str
+    interactions_val_path: str
 
 
 class FeatureStore:
@@ -46,6 +47,7 @@ class FeatureStore:
 
         user_id_tensor = self.user_features[feature_cfg.user_id_col][1:]
         item_id_tensor = self.item_features[feature_cfg.item_id_col][1:]
+        self.item_id_tensor = item_id_tensor
         self.user_index: Dict[int, int] = {
             int(uid): idx + 1 for idx, uid in enumerate(user_id_tensor.tolist())
         }
@@ -62,3 +64,15 @@ class FeatureStore:
         indices = [self.item_index.get(int(iid), 0) for iid in item_ids.tolist()]
         indices = torch.tensor(indices, dtype=torch.long)
         return {k: v[indices] for k, v in self.item_features.items()}
+
+    def get_all_item_features(self) -> Dict[str, torch.Tensor]:
+        return {k: v[1:] for k, v in self.item_features.items()}
+
+    def get_all_item_ids(self) -> torch.Tensor:
+        return self.item_id_tensor
+
+    def map_item_ids_to_indices(self, item_ids: torch.Tensor) -> torch.Tensor:
+        indices = [self.item_index.get(int(iid), 0) for iid in item_ids.tolist()]
+        indices = torch.tensor(indices, dtype=torch.long)
+        indices = torch.clamp(indices - 1, min=0)
+        return indices

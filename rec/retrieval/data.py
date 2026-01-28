@@ -3,13 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, Optional
 
-import pandas as pd
 import torch
 import lightning.pytorch as lit
 from torch.utils.data import DataLoader, IterableDataset
 
 from ..common.data import DataPaths, FeatureStore
-from ..common.utils import CategoryEncoder, FeatureConfig, read_csv_chunks
+from ..common.utils import CategoryEncoder, FeatureConfig, read_parquet_batches, read_table
 
 
 class RetrievalIterableDataset(IterableDataset):
@@ -33,7 +32,7 @@ class RetrievalIterableDataset(IterableDataset):
         self.batch_size = batch_size
 
     def __iter__(self):
-        for chunk in read_csv_chunks(self.interactions_path, self.chunksize):
+        for chunk in read_parquet_batches(self.interactions_path, self.chunksize):
             user_ids = self.user_encoders[self.feature_cfg.user_id_col].transform(
                 chunk[self.feature_cfg.interaction_user_col].astype(str).tolist()
             )
@@ -80,8 +79,8 @@ class RetrievalDataModule(lit.LightningDataModule):
         self.feature_store: Optional[FeatureStore] = None
 
     def setup(self, stage: Optional[str] = None) -> None:
-        users_df = pd.read_csv(self.paths.users_path)
-        items_df = pd.read_csv(self.paths.items_path)
+        users_df = read_table(self.paths.users_path)
+        items_df = read_table(self.paths.items_path)
         self.feature_store = FeatureStore(
             users_df, items_df, self.user_encoders, self.item_encoders, self.feature_cfg
         )
@@ -90,7 +89,27 @@ class RetrievalDataModule(lit.LightningDataModule):
         if self.feature_store is None:
             raise RuntimeError("setup() must be called before train_dataloader")
         dataset = RetrievalIterableDataset(
-            interactions_path=self.paths.interactions_path,
+            interactions_path=self.paths.interactions_train_path,
+            feature_cfg=self.feature_cfg,
+            user_encoders=self.user_encoders,
+            item_encoders=self.item_encoders,
+            feature_store=self.feature_store,
+            chunksize=self.chunksize,
+            batch_size=self.batch_size,
+        )
+        return DataLoader(
+            dataset,
+            batch_size=None,
+            num_workers=self.num_workers,
+        )
+
+    def val_dataloader(self) -> Optional[DataLoader]:
+        if self.feature_store is None:
+            raise RuntimeError("setup() must be called before val_dataloader")
+        if not self.paths.interactions_val_path:
+            return None
+        dataset = RetrievalIterableDataset(
+            interactions_path=self.paths.interactions_val_path,
             feature_cfg=self.feature_cfg,
             user_encoders=self.user_encoders,
             item_encoders=self.item_encoders,

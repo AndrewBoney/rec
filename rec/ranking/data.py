@@ -3,13 +3,12 @@ from __future__ import annotations
 from typing import Dict, Optional
 
 import numpy as np
-import pandas as pd
 import torch
 import lightning.pytorch as lit
 from torch.utils.data import DataLoader, IterableDataset
 
 from ..common.data import DataPaths, FeatureStore
-from ..common.utils import CategoryEncoder, FeatureConfig, read_csv_chunks
+from ..common.utils import CategoryEncoder, FeatureConfig, read_parquet_batches, read_table
 
 
 class RankingIterableDataset(IterableDataset):
@@ -42,7 +41,7 @@ class RankingIterableDataset(IterableDataset):
         return np.random.choice(self.item_id_pool, size=size, replace=True)
 
     def __iter__(self):
-        for chunk in read_csv_chunks(self.interactions_path, self.chunksize):
+        for chunk in read_parquet_batches(self.interactions_path, self.chunksize):
             user_ids = self.user_encoders[self.feature_cfg.user_id_col].transform(
                 chunk[self.feature_cfg.interaction_user_col].astype(str).tolist()
             )
@@ -81,6 +80,68 @@ class RankingIterableDataset(IterableDataset):
                     yield neg_batch
 
 
+class RankingEvalDataset(IterableDataset):
+    def __init__(
+        self,
+        interactions_path: str,
+        feature_cfg: FeatureConfig,
+        user_encoders: Dict[str, CategoryEncoder],
+        item_encoders: Dict[str, CategoryEncoder],
+        feature_store: FeatureStore,
+        chunksize: int = 200_000,
+        negatives_per_pos: int = 50,
+        item_id_pool: Optional[np.ndarray] = None,
+    ) -> None:
+        super().__init__()
+        self.interactions_path = interactions_path
+        self.feature_cfg = feature_cfg
+        self.user_encoders = user_encoders
+        self.item_encoders = item_encoders
+        self.feature_store = feature_store
+        self.chunksize = chunksize
+        self.negatives_per_pos = negatives_per_pos
+        self.item_id_pool = item_id_pool
+
+    def _sample_negatives(self, positive_id: int, size: int) -> np.ndarray:
+        if self.item_id_pool is None:
+            raise ValueError("item_id_pool is required for ranking mode")
+        negatives = np.random.choice(self.item_id_pool, size=size, replace=True)
+        mask = negatives == positive_id
+        while mask.any():
+            negatives[mask] = np.random.choice(self.item_id_pool, size=mask.sum(), replace=True)
+            mask = negatives == positive_id
+        return negatives
+
+    def __iter__(self):
+        for chunk in read_parquet_batches(self.interactions_path, self.chunksize):
+            user_ids = self.user_encoders[self.feature_cfg.user_id_col].transform(
+                chunk[self.feature_cfg.interaction_user_col].astype(str).tolist()
+            )
+            item_ids = self.item_encoders[self.feature_cfg.item_id_col].transform(
+                chunk[self.feature_cfg.interaction_item_col].astype(str).tolist()
+            )
+
+            for user_id, pos_item_id in zip(user_ids, item_ids):
+                candidate_items = np.concatenate(
+                    [np.array([pos_item_id], dtype=np.int64), self._sample_negatives(pos_item_id, self.negatives_per_pos)]
+                )
+                user_ids_t = torch.full((len(candidate_items),), int(user_id), dtype=torch.long)
+                item_ids_t = torch.from_numpy(candidate_items)
+                labels = torch.zeros(len(candidate_items), dtype=torch.float32)
+                labels[0] = 1.0
+
+                user_feats = self.feature_store.get_user_features(user_ids_t)
+                item_feats = self.feature_store.get_item_features(item_ids_t)
+                batch = {
+                    "user_id": user_ids_t,
+                    "item_id": item_ids_t,
+                    "label": labels,
+                    **{f"user_{k}": v for k, v in user_feats.items()},
+                    **{f"item_{k}": v for k, v in item_feats.items()},
+                }
+                yield batch
+
+
 class RankingDataModule(lit.LightningDataModule):
     def __init__(
         self,
@@ -107,8 +168,8 @@ class RankingDataModule(lit.LightningDataModule):
         self.item_id_pool: Optional[np.ndarray] = None
 
     def setup(self, stage: Optional[str] = None) -> None:
-        users_df = pd.read_csv(self.paths.users_path)
-        items_df = pd.read_csv(self.paths.items_path)
+        users_df = read_table(self.paths.users_path)
+        items_df = read_table(self.paths.items_path)
         self.feature_store = FeatureStore(
             users_df, items_df, self.user_encoders, self.item_encoders, self.feature_cfg
         )
@@ -121,13 +182,34 @@ class RankingDataModule(lit.LightningDataModule):
         if self.feature_store is None:
             raise RuntimeError("setup() must be called before train_dataloader")
         dataset = RankingIterableDataset(
-            interactions_path=self.paths.interactions_path,
+            interactions_path=self.paths.interactions_train_path,
             feature_cfg=self.feature_cfg,
             user_encoders=self.user_encoders,
             item_encoders=self.item_encoders,
             feature_store=self.feature_store,
             chunksize=self.chunksize,
             batch_size=self.batch_size,
+            negatives_per_pos=self.negatives_per_pos,
+            item_id_pool=self.item_id_pool,
+        )
+        return DataLoader(
+            dataset,
+            batch_size=None,
+            num_workers=self.num_workers,
+        )
+
+    def val_dataloader(self) -> Optional[DataLoader]:
+        if self.feature_store is None:
+            raise RuntimeError("setup() must be called before val_dataloader")
+        if not self.paths.interactions_val_path:
+            return None
+        dataset = RankingEvalDataset(
+            interactions_path=self.paths.interactions_val_path,
+            feature_cfg=self.feature_cfg,
+            user_encoders=self.user_encoders,
+            item_encoders=self.item_encoders,
+            feature_store=self.feature_store,
+            chunksize=self.chunksize,
             negatives_per_pos=self.negatives_per_pos,
             item_id_pool=self.item_id_pool,
         )

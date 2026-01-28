@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import json
 import os
 import random
@@ -8,9 +6,9 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
+import pyarrow.parquet as pq
 import torch
 import yaml
-
 
 @dataclass
 class FeatureConfig:
@@ -30,9 +28,18 @@ def set_seed(seed: int) -> None:
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
 
+def read_parquet_batches(path: str, batch_size: int) -> Iterable[pd.DataFrame]:
+    if not (path.endswith(".parquet") or path.endswith(".pq")):
+        raise ValueError(f"Only parquet inputs are supported: {path}")
+    parquet_file = pq.ParquetFile(path)
+    for batch in parquet_file.iter_batches(batch_size=batch_size):
+        yield batch.to_pandas()
 
-def read_csv_chunks(path: str, chunksize: int) -> Iterable[pd.DataFrame]:
-    return pd.read_csv(path, chunksize=chunksize)
+
+def read_table(path: str) -> pd.DataFrame:
+    if not (path.endswith(".parquet") or path.endswith(".pq")):
+        raise ValueError(f"Only parquet inputs are supported: {path}")
+    return pd.read_parquet(path)
 
 
 class CategoryEncoder:
@@ -68,17 +75,17 @@ def build_category_maps(
     for col in [feature_cfg.item_id_col] + feature_cfg.item_cat_cols:
         item_encoders[col] = CategoryEncoder()
 
-    users_iter = read_csv_chunks(users_path, chunksize=chunksize)
+    users_iter = read_parquet_batches(users_path, batch_size=chunksize)
     for chunk in users_iter:
         for col in [feature_cfg.user_id_col] + feature_cfg.user_cat_cols:
             user_encoders[col].fit(chunk[col].astype(str).tolist())
 
-    items_iter = read_csv_chunks(items_path, chunksize=chunksize)
+    items_iter = read_parquet_batches(items_path, batch_size=chunksize)
     for chunk in items_iter:
         for col in [feature_cfg.item_id_col] + feature_cfg.item_cat_cols:
             item_encoders[col].fit(chunk[col].astype(str).tolist())
 
-    interactions_iter = read_csv_chunks(interactions_path, chunksize=chunksize)
+    interactions_iter = read_parquet_batches(interactions_path, batch_size=chunksize)
     for chunk in interactions_iter:
         user_encoders[feature_cfg.user_id_col].fit(
             chunk[feature_cfg.interaction_user_col].astype(str).tolist()

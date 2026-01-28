@@ -1,16 +1,17 @@
 dataset:
   name: dummy
   paths:
-    users: data/dummy/users.csv
-    items: data/dummy/items.csv
-    interactions: data/dummy/interactions.csv
+    users: data/dummy/prepared/users.parquet
+    items: data/dummy/prepared/items.parquet
+    interactions_train: data/dummy/prepared/interactions_train.parquet
+    interactions_val: data/dummy/prepared/interactions_val.parquet
   columns:
     user_id: user_id
     item_id: item_id
     user_cat_cols:
       - user_group
       - region
-      - age
+      - age_group
     item_cat_cols:
       - category
       - price_band
@@ -47,7 +48,7 @@ ranking:
       - 64
     dropout: 0.1
   training:
-    batch_size: 1024
+    batch_size: 4096
     num_workers: 0
     chunksize: 200000
     max_epochs: 3

@@ -7,6 +7,7 @@ import torch.nn.functional as F
 import lightning.pytorch as lit
 
 from ..common.model import MLP, TowerConfig, TwoTowerEncoder
+from ..common.metrics import topk_metrics_from_labels
 
 
 class TwoTowerRanking(lit.LightningModule):
@@ -40,6 +41,21 @@ class TwoTowerRanking(lit.LightningModule):
         logits = self.forward(user_features, item_features)
         loss = F.binary_cross_entropy_with_logits(logits, labels)
         self.log("train_loss", loss, prog_bar=True)
+        return loss
+
+    def validation_step(self, batch: Dict[str, torch.Tensor], batch_idx: int) -> torch.Tensor:
+        user_prefix = "user_"
+        item_prefix = "item_"
+        user_features = {k[len(user_prefix):]: v for k, v in batch.items() if k.startswith(user_prefix)}
+        item_features = {k[len(item_prefix):]: v for k, v in batch.items() if k.startswith(item_prefix)}
+        labels = batch["label"]
+        logits = self.forward(user_features, item_features)
+        loss = F.binary_cross_entropy_with_logits(logits, labels)
+        self.log("val_loss", loss, prog_bar=True, on_step=False, on_epoch=True)
+
+        metrics = topk_metrics_from_labels(logits, labels, ks=[5, 10, 20])
+        for name, value in metrics.items():
+            self.log(f"val_{name}", value, prog_bar=name in {"recall@10", "ndcg@10"}, on_step=False, on_epoch=True)
         return loss
 
     def configure_optimizers(self):

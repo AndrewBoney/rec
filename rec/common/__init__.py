@@ -9,7 +9,7 @@ from .config import (
 )
 from .data import DataPaths, FeatureStore
 from .model import MLP, TowerConfig, TwoTowerEncoder
-from .utils import CategoryEncoder, FeatureConfig, build_category_maps, load_encoders, read_csv_chunks, save_encoders, set_seed
+from .utils import CategoryEncoder, FeatureConfig, build_category_maps, load_encoders, read_parquet_batches, read_table, save_encoders
 
 __all__ = [
     "DataPaths",
@@ -28,7 +28,7 @@ __all__ = [
     "FeatureConfig",
     "build_category_maps",
     "load_encoders",
-    "read_csv_chunks",
-    "save_encoders",
-    "set_seed",
+    "read_parquet_batches",
+    "read_table",
+    "save_encoders"
 ]
