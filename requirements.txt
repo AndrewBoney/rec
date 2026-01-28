@@ -5,3 +5,4 @@ torch
 PyYAML
 kaggle
 dotenv
+pyarrow
