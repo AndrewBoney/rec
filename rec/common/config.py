@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import argparse
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from .utils import load_config
 
@@ -25,25 +25,31 @@ def build_base_parser(description: str) -> argparse.ArgumentParser:
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--chunksize", type=int, default=200_000)
     parser.add_argument("--max-epochs", type=int, default=3)
+    parser.add_argument("--eval-steps", type=int, default=0)
+    parser.add_argument("--log-steps", type=int, default=50)
     parser.add_argument("--embedding-dim", type=int, default=64)
     parser.add_argument("--hidden-dims", nargs="*", type=int, default=[128, 64])
     parser.add_argument("--dropout", type=float, default=0.1)
     parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--use-wandb", action="store_true", help="Enable Weights & Biases logging")
+    parser.add_argument("--wandb-project", default="rec")
+    parser.add_argument("--wandb-entity", default=None)
+    parser.add_argument("--wandb-run-name", default=None)
     return parser
 
 
-def add_retrieval_args(parser: argparse.ArgumentParser, include_checkpoint: bool = True) -> argparse.ArgumentParser:
+def add_retrieval_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     parser.add_argument("--temperature", type=float, default=0.05)
-    if include_checkpoint:
-        parser.add_argument("--save-checkpoint", default="retrieval.ckpt")
+    parser.add_argument("--save-checkpoint", default="retrieval.ckpt")
+    parser.add_argument("--artifact-dir", default=None)
     return parser
 
 
-def add_ranking_args(parser: argparse.ArgumentParser, include_checkpoint: bool = True) -> argparse.ArgumentParser:
+def add_ranking_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     parser.add_argument("--negatives-per-pos", type=int, default=4)
     parser.add_argument("--init-from-retrieval", default=None)
-    if include_checkpoint:
-        parser.add_argument("--save-checkpoint", default="ranking.ckpt")
+    parser.add_argument("--save-checkpoint", default="ranking.ckpt")
+    parser.add_argument("--artifact-dir", default=None)
     return parser
 
 
@@ -53,30 +59,79 @@ def load_yaml_config(path: str | None) -> Dict[str, Any]:
     return load_config(path)
 
 
+def _apply_config_values(
+    args: argparse.Namespace,
+    values: Dict[str, Any],
+    key_map: Optional[Dict[str, str]] = None,
+) -> argparse.Namespace:
+    mapping = key_map or {}
+    for key, value in values.items():
+        target = mapping.get(key, key)
+        setattr(args, target, value)
+    return args
+
+
+def _flatten_config(cfg: Dict[str, Any], stage: Optional[str] = None) -> Dict[str, Any]:
+    merged: Dict[str, Any] = {}
+    merged.update(cfg.get("args", {}))
+
+    dataset = cfg.get("dataset", {})
+    merged.update(dataset.get("paths", {}))
+
+    columns = dataset.get("columns", {})
+    column_map = {
+        "user_id": "user_id_col",
+        "item_id": "item_id_col",
+    }
+    merged.update({column_map.get(k, k): v for k, v in columns.items()})
+
+    merged.update(cfg.get("shared", {}))
+
+    if stage:
+        stage_cfg = cfg.get(stage, {})
+        merged.update(stage_cfg.get("model", {}))
+        training_cfg = stage_cfg.get("training", {})
+        merged.update(training_cfg)
+        if "checkpoint" in stage_cfg:
+            merged["save_checkpoint"] = stage_cfg["checkpoint"]
+        elif "checkpoint" in training_cfg and "save_checkpoint" not in merged:
+            merged["save_checkpoint"] = training_cfg["checkpoint"]
+
+    return merged
+
+
+def apply_config(args: argparse.Namespace, cfg: Dict[str, Any], stage: Optional[str] = None) -> argparse.Namespace:
+    values = _flatten_config(cfg, stage=stage)
+    return _apply_config_values(args, values)
+
+
 def apply_dataset_config(args: argparse.Namespace, cfg: Dict[str, Any]) -> argparse.Namespace:
     dataset = cfg.get("dataset", {})
     paths = dataset.get("paths", {})
     columns = dataset.get("columns", {})
 
-    args.users = paths.get("users", args.users)
-    args.items = paths.get("items", args.items)
-    args.interactions_train = paths.get("interactions_train", args.interactions_train)
-    args.interactions_val = paths.get("interactions_val", args.interactions_val)
-
-    args.user_id_col = columns.get("user_id", args.user_id_col)
-    args.item_id_col = columns.get("item_id", args.item_id_col)
-    args.user_cat_cols = columns.get("user_cat_cols", args.user_cat_cols)
-    args.item_cat_cols = columns.get("item_cat_cols", args.item_cat_cols)
-    args.interaction_user_col = columns.get("interaction_user_col", args.interaction_user_col)
-    args.interaction_item_col = columns.get("interaction_item_col", args.interaction_item_col)
+    _apply_config_values(args, paths)
+    column_aliases = {k: v for k, v in columns.items() if k in {"user_id", "item_id"}}
+    if column_aliases:
+        _apply_config_values(
+            args,
+            column_aliases,
+            key_map={
+                "user_id": "user_id_col",
+                "item_id": "item_id_col",
+            },
+        )
+    _apply_config_values(
+        args,
+        {k: v for k, v in columns.items() if k not in {"user_id", "item_id"}},
+    )
 
     return args
 
 
 def apply_shared_config(args: argparse.Namespace, cfg: Dict[str, Any]) -> argparse.Namespace:
     shared = cfg.get("shared", {})
-    args.seed = shared.get("seed", args.seed)
-    args.encoder_cache = shared.get("encoder_cache", args.encoder_cache)
+    _apply_config_values(args, shared)
     return args
 
 
@@ -85,26 +140,14 @@ def apply_stage_config(args: argparse.Namespace, cfg: Dict[str, Any], stage: str
     model_cfg = stage_cfg.get("model", {})
     training_cfg = stage_cfg.get("training", {})
 
-    args.embedding_dim = model_cfg.get("embedding_dim", args.embedding_dim)
-    args.hidden_dims = model_cfg.get("hidden_dims", args.hidden_dims)
-    args.dropout = model_cfg.get("dropout", args.dropout)
-
-    args.batch_size = training_cfg.get("batch_size", args.batch_size)
-    args.num_workers = training_cfg.get("num_workers", args.num_workers)
-    args.chunksize = training_cfg.get("chunksize", args.chunksize)
-    args.max_epochs = training_cfg.get("max_epochs", args.max_epochs)
-    args.lr = training_cfg.get("lr", args.lr)
-
-    if "seed" in training_cfg:
-        args.seed = training_cfg["seed"]
-    if "encoder_cache" in training_cfg:
-        args.encoder_cache = training_cfg["encoder_cache"]
-    if "temperature" in training_cfg:
-        args.temperature = training_cfg["temperature"]
-    if "negatives_per_pos" in training_cfg:
-        args.negatives_per_pos = training_cfg["negatives_per_pos"]
-    if "checkpoint" in training_cfg:
-        args.save_checkpoint = training_cfg["checkpoint"]
+    _apply_config_values(args, model_cfg)
+    _apply_config_values(
+        args,
+        training_cfg,
+        key_map={
+            "checkpoint": "save_checkpoint",
+        },
+    )
 
     return args
 

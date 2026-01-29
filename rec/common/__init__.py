@@ -1,6 +1,7 @@
 from .config import (
     add_ranking_args,
     add_retrieval_args,
+    apply_config,
     apply_dataset_config,
     apply_shared_config,
     apply_stage_config,
@@ -21,6 +22,7 @@ __all__ = [
     "add_retrieval_args",
     "add_ranking_args",
     "load_yaml_config",
+    "apply_config",
     "apply_dataset_config",
     "apply_shared_config",
     "apply_stage_config",

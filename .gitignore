@@ -133,6 +133,8 @@ Thumbs.db
 *.csv
 data/
 lightning_logs/
+wandb/
+artifacts/
 *.json*
 *.ckpt
 *.ipynb

@@ -1,8 +1,9 @@
 numpy
 pandas
-lightning
 torch
 PyYAML
 kaggle
-dotenv
+python-dotenv
 pyarrow
+wandb
+tqdm

@@ -3,12 +3,11 @@ from __future__ import annotations
 import argparse
 
 import torch
+from tqdm import tqdm
 
 from ..common.config import (
     add_retrieval_args,
-    apply_dataset_config,
-    apply_shared_config,
-    apply_stage_config,
+    apply_config,
     build_base_parser,
     ensure_dataset_args,
     load_yaml_config,
@@ -22,7 +21,9 @@ from ..common.train_utils import (
     build_user_item_map,
     evaluate_retrieval,
     get_device,
+    init_wandb,
     load_or_build_encoders,
+    save_inference_bundle,
 )
 from .data import build_retrieval_dataloader
 from .model import TwoTowerRetrieval
@@ -32,16 +33,6 @@ def parse_args() -> argparse.Namespace:
     parser = build_base_parser("Two-tower retrieval training")
     add_retrieval_args(parser)
     return parser.parse_args()
-
-
-def apply_config(args: argparse.Namespace) -> argparse.Namespace:
-    cfg = load_yaml_config(args.config)
-    if not cfg:
-        return args
-    args = apply_dataset_config(args, cfg)
-    args = apply_shared_config(args, cfg)
-    args = apply_stage_config(args, cfg, "retrieval")
-    return args
 
 
 def train(args: argparse.Namespace) -> str:
@@ -72,6 +63,8 @@ def train(args: argparse.Namespace) -> str:
     device = get_device()
     model.to(device)
 
+    run = init_wandb(args, "retrieval")
+
     train_loader, feature_store = build_retrieval_dataloader(
         paths=paths,
         feature_cfg=feature_cfg,
@@ -91,11 +84,14 @@ def train(args: argparse.Namespace) -> str:
     )
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
+    global_step = 0
     for epoch in range(1, args.max_epochs + 1):
         model.train()
         total_loss = 0.0
         steps = 0
-        for batch in train_loader:
+        total_batches = len(train_loader) if hasattr(train_loader, "__len__") else None
+        progress = tqdm(train_loader, desc=f"Epoch {epoch}", total=total_batches)
+        for batch in progress:
             batch = to_device(batch, device)
             loss = model.compute_loss(batch)
             optimizer.zero_grad()
@@ -103,6 +99,24 @@ def train(args: argparse.Namespace) -> str:
             optimizer.step()
             total_loss += loss.item()
             steps += 1
+            global_step += 1
+            progress.set_postfix(loss=f"{loss.item():.4f}")
+
+            if args.log_steps > 0 and global_step % args.log_steps == 0:
+                if run:
+                    run.log({"train/loss": loss.item(), "train/epoch": epoch}, step=global_step)
+
+            if args.eval_steps > 0 and global_step % args.eval_steps == 0:
+                metrics = evaluate_retrieval(
+                    model,
+                    feature_store,
+                    user_item_map,
+                    device=device,
+                    ks=[5, 10, 20],
+                )
+                if run and metrics:
+                    run.log({f"val/{k}": v for k, v in metrics.items()}, step=global_step)
+                model.train()
 
         avg_loss = total_loss / max(1, steps)
         metrics = evaluate_retrieval(
@@ -114,15 +128,49 @@ def train(args: argparse.Namespace) -> str:
         )
         metrics_str = " ".join([f"{k}={v:.4f}" for k, v in metrics.items()])
         print(f"Epoch {epoch}: train_loss={avg_loss:.4f} {metrics_str}")
+        if run:
+            run.log({"train/epoch_loss": avg_loss}, step=global_step)
+            if metrics:
+                run.log({f"val/{k}": v for k, v in metrics.items()}, step=global_step)
 
     if args.save_checkpoint:
         torch.save({"state_dict": model.state_dict()}, args.save_checkpoint)
+
+    artifact_dir = args.artifact_dir or (f"{args.save_checkpoint}.artifact" if args.save_checkpoint else None)
+    if artifact_dir:
+        bundle = save_inference_bundle(
+            artifact_dir=artifact_dir,
+            stage="retrieval",
+            model_state=model.state_dict(),
+            feature_cfg=feature_cfg,
+            user_encoders=user_encoders,
+            item_encoders=item_encoders,
+            tower_cfg=tower_cfg,
+            extra_metadata={
+                "user_cardinalities": user_cardinalities,
+                "item_cardinalities": item_cardinalities,
+                "temperature": args.temperature,
+            },
+        )
+        if run:
+            try:
+                import importlib
+                wandb = importlib.import_module("wandb")
+                artifact = wandb.Artifact("retrieval_bundle", type="model")
+                artifact.add_dir(bundle["artifact_dir"])
+                run.log_artifact(artifact)
+            except Exception as exc:
+                print(f"Failed to log wandb artifact: {exc}")
+    if run:
+        run.finish()
     return args.save_checkpoint
 
 
 def main() -> None:
     args = parse_args()
-    args = apply_config(args)
+    cfg = load_yaml_config(args.config)
+    if cfg:
+        args = apply_config(args, cfg, stage="retrieval")
     args = ensure_dataset_args(args)
     train(args)
 

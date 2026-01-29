@@ -1,9 +1,11 @@
-from __future__ import annotations
-
+import importlib
+import json
 import os
-from typing import Dict, Iterable, List, Tuple
-
 import torch
+
+from dataclasses import asdict
+from dotenv import load_dotenv
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from .data import DataPaths, FeatureStore
 from .metrics import aggregate_ranking_metrics
@@ -94,6 +96,89 @@ def build_user_item_map(
     return user_to_items
 
 
+def init_wandb(args, stage: str) -> Optional[Any]:
+    load_dotenv(override=False)
+    use_wandb = bool(getattr(args, "use_wandb", False)) or bool(os.getenv("WANDB_API_KEY"))
+    if not use_wandb:
+        return None
+    if not os.getenv("WANDB_API_KEY"):
+        print("WANDB_API_KEY not found in environment; skipping wandb logging.")
+        return None
+    try:
+        wandb = importlib.import_module("wandb")
+    except ImportError as exc:
+        raise RuntimeError("wandb is not installed. Please install it to enable logging.") from exc
+    wandb.login()
+    run = wandb.init(
+        project=getattr(args, "wandb_project", "rec"),
+        entity=getattr(args, "wandb_entity", None),
+        name=getattr(args, "wandb_run_name", None),
+        config={k: v for k, v in vars(args).items() if k != "config"},
+        tags=[stage],
+    )
+    return run
+
+
+def save_inference_bundle(
+    artifact_dir: str,
+    stage: str,
+    model_state: Dict[str, torch.Tensor],
+    feature_cfg: FeatureConfig,
+    user_encoders: Dict[str, CategoryEncoder],
+    item_encoders: Dict[str, CategoryEncoder],
+    tower_cfg,
+    extra_metadata: Optional[Dict[str, Any]] = None,
+    checkpoint_name: str = "model.pt",
+) -> Dict[str, str]:
+    os.makedirs(artifact_dir, exist_ok=True)
+    user_enc_path = os.path.join(artifact_dir, "encoders.users.json")
+    item_enc_path = os.path.join(artifact_dir, "encoders.items.json")
+    save_encoders(user_enc_path, user_encoders)
+    save_encoders(item_enc_path, item_encoders)
+
+    ckpt_path = os.path.join(artifact_dir, checkpoint_name)
+    torch.save({"state_dict": model_state}, ckpt_path)
+
+    metadata = {
+        "stage": stage,
+        "feature_config": asdict(feature_cfg),
+        "tower_config": asdict(tower_cfg),
+        "checkpoint": checkpoint_name,
+        "encoders": {
+            "users": os.path.basename(user_enc_path),
+            "items": os.path.basename(item_enc_path),
+        },
+    }
+    if extra_metadata:
+        metadata.update(extra_metadata)
+
+    metadata_path = os.path.join(artifact_dir, "metadata.json")
+    with open(metadata_path, "w", encoding="utf-8") as f:
+        json.dump(metadata, f, indent=2)
+    return {
+        "artifact_dir": artifact_dir,
+        "metadata": metadata_path,
+        "checkpoint": ckpt_path,
+        "encoders_users": user_enc_path,
+        "encoders_items": item_enc_path,
+    }
+
+
+def load_inference_bundle(artifact_dir: str) -> Dict[str, Any]:
+    metadata_path = os.path.join(artifact_dir, "metadata.json")
+    with open(metadata_path, "r", encoding="utf-8") as f:
+        metadata = json.load(f)
+    user_encoders = load_encoders(os.path.join(artifact_dir, metadata["encoders"]["users"]))
+    item_encoders = load_encoders(os.path.join(artifact_dir, metadata["encoders"]["items"]))
+    checkpoint = os.path.join(artifact_dir, metadata["checkpoint"])
+    return {
+        "metadata": metadata,
+        "checkpoint": checkpoint,
+        "user_encoders": user_encoders,
+        "item_encoders": item_encoders,
+    }
+
+# TODO: simplify below by implementing a method in both ranking and retrieval methods that convert user and item embs to scores 
 def _score_all_items_retrieval(
     model,
     user_features: Dict[str, torch.Tensor],

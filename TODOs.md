@@ -1,6 +1,5 @@
-- refactor from pytorch lightning to torch and .
+- ~~refactor from pytorch lightning to plain torch.~~
 - Add wandb logging. This should also enable storing and reusing the model, in a way where encoders (i.e. conversation of features into indexes) can also be reapplied to a new dataset for inference. 
-- more modular approach to metrics. this should ideally use existing retrieval metric logic from torchmetrics. 
 - Right now in the YAML and CLI setup it assumes that retrieval and ranking have the same columns. I want to have the ability to do use different columns for retrieval and ranking.  
 - Implement alternative model architectures, e.g. combining embeddings with stacked + learned weightings. 
 - Ability to use text and image encoders for cols given in YAML / CLI, with use of an embedding model from HuggingFace

@@ -38,6 +38,13 @@ retrieval:
     max_epochs: 3
     lr: 0.001
     temperature: 0.05
+    eval_steps: 200
+    log_steps: 50
+    artifact_dir: artifacts/retrieval
+    use_wandb: true
+    wandb_project: rec
+    wandb_entity: null
+    wandb_run_name: retrieval-dummy-small
     checkpoint: retrieval.ckpt
 
 ranking:
@@ -54,4 +61,11 @@ ranking:
     max_epochs: 3
     lr: 0.001
     negatives_per_pos: 4
+    eval_steps: 200
+    log_steps: 50
+    artifact_dir: artifacts/ranking
+    use_wandb: true
+    wandb_project: rec
+    wandb_entity: null
+    wandb_run_name: ranking-dummy-small
     checkpoint: ranking.ckpt

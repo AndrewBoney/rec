@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Dict, Iterable, Optional
+import math
 
 import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data import IterableDataset
+import pyarrow.parquet as pq
 
 from .utils import CategoryEncoder, FeatureConfig, encode_dataframe, read_parquet_batches, read_table
 
@@ -105,6 +107,14 @@ class InteractionIterableDataset(IterableDataset):
         self.negatives_per_pos = negatives_per_pos
         self.item_id_pool = item_id_pool
         self.include_labels = include_labels
+
+    def __len__(self) -> int:
+        parquet = pq.ParquetFile(self.interactions_path)
+        num_rows = parquet.metadata.num_rows if parquet.metadata else 0
+        if num_rows == 0:
+            return 0
+        pos_batches = math.ceil(num_rows / self.batch_size)
+        return pos_batches * (1 + self.negatives_per_pos)
 
     def _sample_negatives(self, size: int) -> np.ndarray:
         if self.item_id_pool is None:
