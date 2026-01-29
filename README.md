@@ -1,18 +1,20 @@
 # rec
 
-Recommendation Systems are very very difficult. They require complex dataset construction from diverse sources, multiple training schedules, mismatches between training objectives and KPI's at deployment, custom model architectures, versioning across multiple dimensions (data, model code, model weights), etc. etc. 
+Recommendation systems are hard. They require complex dataset construction from diverse sources, multiple training schedules, frequent mismatches between training objectives and deployment KPIs, custom model architectures, and versioning across multiple dimensions (data, code, and model weights), among other challenges.
 
-As such, it's very difficult to find examples of simple end to end implementations that researchers can follow. This leads to researchers cobbling together systems from tutorials and examples that only cover certain aspects of the Rec-Sys workflow, leading to muddled understanding and implementation. 
+Because of this complexity, it’s surprisingly difficult to find simple, end-to-end implementations that researchers can follow. Instead, many practitioners end up stitching together systems from tutorials that only cover isolated parts of the recommendation workflow. This often leads to fragmented understanding and brittle implementations.
 
-This repo is designed to help solve that problem, by implementing an end to end recommendation system - including data prep, training and deployment. This is inspired by Andrej Karpathy's [nanochat project](https://github.com/karpathy/nanochat), which is a minimal as possible implementation of a modern LLM end to end. In a similar way I plan to provide a lightweight RecSys, that will do just about what is neccesary, while being simple enough that researchers can easily adjust and intervene. 
+This repository is designed to help address that gap by providing a **complete, end-to-end recommendation system**, covering data preparation, training, and deployment in a single, coherent example.
 
-What this:
+The project is inspired by Andrej Karpathy’s [nanochat](https://github.com/karpathy/nanochat), which aims to be the minimal viable implementation of a modern LLM. In the same spirit, this repo provides a **lightweight recommendation system** that does only what is necessary—while remaining simple enough for researchers to understand, modify, and extend.
 
-- A piece for researchers to better understand the full Recommendation System workflow.
-- Good reusable code implementating of the tricker aspects of Recommendation Systems.
-- An opportunity for researchers to contribute implementations of new or interesting ideas in the rec space. 
+__What this *is*__
 
-What this isn't:
+- A learning resource for researchers who want to understand the full recommendation system workflow, end to end.
+- A collection of clean, reusable implementations of the trickier parts of building recommendation systems.
+- A foundation for experimenting with, and contributing, new or interesting ideas in the recommender systems space.
 
-- An exaughstive implementation of all approaches to recs. My focus is specifically on Duel Encoder networks.  
-- A full production ready implementation. While I aim to ensure code is well written, tested and reusable, a key goal here is to be minimal in approach. I'd like to keep this < 5000 lines of readable python code, where a real production implementation at scale in industry may well be 10x that across multiple languages.
+__What this *isn’t*__
+
+- An exhaustive survey or implementation of all recommendation approaches. The focus here is deliberately narrow, primarily on **dual-encoder architectures**.
+- A fully production-ready system. While the code aims to be well-written, tested, and reusable, the primary goal is **clarity and minimalism**. The target is to keep the project under ~5,000 lines of readable Python. In contrast, a real-world production system at scale might be an order of magnitude larger and span multiple languages and services.
