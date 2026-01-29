@@ -107,9 +107,7 @@ class RankingEvalDataset(IterableDataset):
             raise ValueError("item_id_pool is required for ranking mode")
         negatives = np.random.choice(self.item_id_pool, size=size, replace=True)
         mask = negatives == positive_id
-        while mask.any():
-            negatives[mask] = np.random.choice(self.item_id_pool, size=mask.sum(), replace=True)
-            mask = negatives == positive_id
+        negatives[mask] = np.random.choice(self.item_id_pool, size=mask.sum(), replace=True)
         return negatives
 
     def __iter__(self):

@@ -16,7 +16,7 @@ class DataPaths:
     interactions_train_path: str
     interactions_val_path: str
 
-
+# TODO: implement a faster version of this, not relying on pandas / python loops 
 class FeatureStore:
     def __init__(
         self,
