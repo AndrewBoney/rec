@@ -1,59 +1,66 @@
 from __future__ import annotations
 
-from typing import Dict, Iterable, List
+from typing import Dict, Iterable, List, Sequence
 
 import torch
 
 
 def _as_list(ks: Iterable[int]) -> List[int]:
-    return list(ks)
+    return sorted({int(k) for k in ks})
 
 
-def topk_metrics_from_indices(
-    scores: torch.Tensor,
-    target_indices: torch.Tensor,
+def _ideal_dcg(num_relevant: int, k: int) -> float:
+    limit = min(num_relevant, k)
+    if limit == 0:
+        return 0.0
+    ranks = torch.arange(1, limit + 1, dtype=torch.float32)
+    return torch.sum(1.0 / torch.log2(ranks + 1.0)).item()
+
+
+def aggregate_ranking_metrics(
+    topk_indices: torch.Tensor,
+    relevant_indices: Sequence[torch.Tensor],
     ks: Iterable[int],
-) -> Dict[str, torch.Tensor]:
-    ks = _as_list(ks)
-    max_candidates = scores.size(1)
-    ks = [k for k in ks if k <= max_candidates]
-    if not ks:
+) -> Dict[str, float]:
+    ks_list = _as_list(ks)
+    if not ks_list or topk_indices.numel() == 0:
         return {}
-    max_k = max(ks)
-    topk = torch.topk(scores, max_k, dim=1).indices
-    target_indices = target_indices.unsqueeze(1)
-    matches = topk == target_indices
-    hit = matches.any(dim=1)
-    rank = torch.argmax(matches.int(), dim=1) + 1
+    max_k = max(ks_list)
+    if topk_indices.size(1) < max_k:
+        raise ValueError("topk_indices must have at least max(k) columns")
 
-    metrics: Dict[str, torch.Tensor] = {}
-    reciprocal_rank = torch.where(
-        hit, 1.0 / rank.float(), torch.zeros_like(rank, dtype=torch.float32)
-    )
-    metrics["mrr"] = reciprocal_rank.mean()
+    totals = {f"recall@{k}": 0.0 for k in ks_list}
+    totals.update({f"precision@{k}": 0.0 for k in ks_list})
+    totals.update({f"ndcg@{k}": 0.0 for k in ks_list})
+    totals["mrr"] = 0.0
 
-    for k in ks:
-        hit_k = hit & (rank <= k)
-        recall_k = hit_k.float().mean()
-        precision_k = (hit_k.float() / float(k)).mean()
-        ndcg_k = torch.where(
-            hit_k,
-            1.0 / torch.log2(rank.float() + 1.0),
-            torch.zeros_like(rank, dtype=torch.float32),
-        ).mean()
-        metrics[f"recall@{k}"] = recall_k
-        metrics[f"precision@{k}"] = precision_k
-        metrics[f"ndcg@{k}"] = ndcg_k
-    return metrics
+    num_users = topk_indices.size(0)
+    for idx in range(num_users):
+        topk = topk_indices[idx]
+        rel = relevant_indices[idx]
+        if rel.numel() == 0:
+            continue
+        hits = torch.isin(topk, rel)
+        ranks = torch.arange(1, topk.numel() + 1, dtype=torch.float32)
 
+        if hits.any():
+            first_rank = ranks[hits][0].item()
+            totals["mrr"] += 1.0 / first_rank
 
-def topk_metrics_from_labels(
-    scores: torch.Tensor,
-    labels: torch.Tensor,
-    ks: Iterable[int],
-) -> Dict[str, torch.Tensor]:
-    if labels.dim() == 1:
-        labels = labels.unsqueeze(0)
-        scores = scores.unsqueeze(0)
-    target_indices = torch.argmax(labels, dim=1)
-    return topk_metrics_from_indices(scores, target_indices, ks)
+        for k in ks_list:
+            hits_k = hits[:k]
+            num_hits = hits_k.sum().item()
+            totals[f"recall@{k}"] += num_hits / float(rel.numel())
+            totals[f"precision@{k}"] += num_hits / float(k)
+
+            if num_hits > 0:
+                rank_slice = ranks[:k]
+                dcg = torch.sum((hits_k.float() / torch.log2(rank_slice + 1.0))).item()
+            else:
+                dcg = 0.0
+            idcg = _ideal_dcg(int(rel.numel()), k)
+            totals[f"ndcg@{k}"] += (dcg / idcg) if idcg > 0 else 0.0
+
+    if num_users == 0:
+        return {}
+    return {k: v / float(num_users) for k, v in totals.items()}

@@ -1,218 +1,42 @@
 from __future__ import annotations
 
-from typing import Dict, Optional
+from typing import Dict, Tuple
 
 import numpy as np
-import torch
-import lightning.pytorch as lit
-from torch.utils.data import DataLoader, IterableDataset
+from torch.utils.data import DataLoader
 
-from ..common.data import DataPaths, FeatureStore
-from ..common.utils import CategoryEncoder, FeatureConfig, read_parquet_batches, read_table
+from ..common.data import DataPaths, FeatureStore, InteractionIterableDataset, build_feature_store
+from ..common.utils import CategoryEncoder, FeatureConfig, read_table
 
 
-class RankingIterableDataset(IterableDataset):
-    def __init__(
-        self,
-        interactions_path: str,
-        feature_cfg: FeatureConfig,
-        user_encoders: Dict[str, CategoryEncoder],
-        item_encoders: Dict[str, CategoryEncoder],
-        feature_store: FeatureStore,
-        chunksize: int = 200_000,
-        batch_size: int = 2048,
-        negatives_per_pos: int = 4,
-        item_id_pool: Optional[np.ndarray] = None,
-    ) -> None:
-        super().__init__()
-        self.interactions_path = interactions_path
-        self.feature_cfg = feature_cfg
-        self.user_encoders = user_encoders
-        self.item_encoders = item_encoders
-        self.feature_store = feature_store
-        self.chunksize = chunksize
-        self.batch_size = batch_size
-        self.negatives_per_pos = negatives_per_pos
-        self.item_id_pool = item_id_pool
+def build_ranking_dataloader(
+    paths: DataPaths,
+    feature_cfg: FeatureConfig,
+    user_encoders: Dict[str, CategoryEncoder],
+    item_encoders: Dict[str, CategoryEncoder],
+    batch_size: int = 1024,
+    num_workers: int = 0,
+    chunksize: int = 200_000,
+    negatives_per_pos: int = 4,
+) -> Tuple[DataLoader, FeatureStore, np.ndarray]:
+    feature_store = build_feature_store(paths, feature_cfg, user_encoders, item_encoders)
+    items_df = read_table(paths.items_path)
+    item_ids = item_encoders[feature_cfg.item_id_col].transform(
+        items_df[feature_cfg.item_id_col].astype(str).tolist()
+    )
+    item_id_pool = np.array(item_ids, dtype=np.int64)
 
-    def _sample_negatives(self, size: int) -> np.ndarray:
-        if self.item_id_pool is None:
-            raise ValueError("item_id_pool is required for ranking mode")
-        return np.random.choice(self.item_id_pool, size=size, replace=True)
-
-    def __iter__(self):
-        for chunk in read_parquet_batches(self.interactions_path, self.chunksize):
-            user_ids = self.user_encoders[self.feature_cfg.user_id_col].transform(
-                chunk[self.feature_cfg.interaction_user_col].astype(str).tolist()
-            )
-            item_ids = self.item_encoders[self.feature_cfg.item_id_col].transform(
-                chunk[self.feature_cfg.interaction_item_col].astype(str).tolist()
-            )
-
-            for start in range(0, len(user_ids), self.batch_size):
-                end = start + self.batch_size
-                user_ids_t = torch.from_numpy(user_ids[start:end])
-                item_ids_t = torch.from_numpy(item_ids[start:end])
-
-                labels = torch.ones(len(user_ids_t), dtype=torch.float32)
-                user_feats = self.feature_store.get_user_features(user_ids_t)
-                item_feats = self.feature_store.get_item_features(item_ids_t)
-                pos_batch = {
-                    "user_id": user_ids_t,
-                    "item_id": item_ids_t,
-                    "label": labels,
-                    **{f"user_{k}": v for k, v in user_feats.items()},
-                    **{f"item_{k}": v for k, v in item_feats.items()},
-                }
-                yield pos_batch
-
-                for _ in range(self.negatives_per_pos):
-                    neg_item_ids = self._sample_negatives(len(user_ids_t))
-                    neg_item_ids_t = torch.from_numpy(neg_item_ids)
-                    neg_item_feats = self.feature_store.get_item_features(neg_item_ids_t)
-                    neg_batch = {
-                        "user_id": user_ids_t,
-                        "item_id": neg_item_ids_t,
-                        "label": torch.zeros(len(user_ids_t), dtype=torch.float32),
-                        **{f"user_{k}": v for k, v in user_feats.items()},
-                        **{f"item_{k}": v for k, v in neg_item_feats.items()},
-                    }
-                    yield neg_batch
-
-
-class RankingEvalDataset(IterableDataset):
-    def __init__(
-        self,
-        interactions_path: str,
-        feature_cfg: FeatureConfig,
-        user_encoders: Dict[str, CategoryEncoder],
-        item_encoders: Dict[str, CategoryEncoder],
-        feature_store: FeatureStore,
-        chunksize: int = 200_000,
-        negatives_per_pos: int = 50,
-        item_id_pool: Optional[np.ndarray] = None,
-    ) -> None:
-        super().__init__()
-        self.interactions_path = interactions_path
-        self.feature_cfg = feature_cfg
-        self.user_encoders = user_encoders
-        self.item_encoders = item_encoders
-        self.feature_store = feature_store
-        self.chunksize = chunksize
-        self.negatives_per_pos = negatives_per_pos
-        self.item_id_pool = item_id_pool
-
-    def _sample_negatives(self, positive_id: int, size: int) -> np.ndarray:
-        if self.item_id_pool is None:
-            raise ValueError("item_id_pool is required for ranking mode")
-        negatives = np.random.choice(self.item_id_pool, size=size, replace=True)
-        mask = negatives == positive_id
-        negatives[mask] = np.random.choice(self.item_id_pool, size=mask.sum(), replace=True)
-        return negatives
-
-    def __iter__(self):
-        for chunk in read_parquet_batches(self.interactions_path, self.chunksize):
-            user_ids = self.user_encoders[self.feature_cfg.user_id_col].transform(
-                chunk[self.feature_cfg.interaction_user_col].astype(str).tolist()
-            )
-            item_ids = self.item_encoders[self.feature_cfg.item_id_col].transform(
-                chunk[self.feature_cfg.interaction_item_col].astype(str).tolist()
-            )
-
-            for user_id, pos_item_id in zip(user_ids, item_ids):
-                candidate_items = np.concatenate(
-                    [np.array([pos_item_id], dtype=np.int64), self._sample_negatives(pos_item_id, self.negatives_per_pos)]
-                )
-                user_ids_t = torch.full((len(candidate_items),), int(user_id), dtype=torch.long)
-                item_ids_t = torch.from_numpy(candidate_items)
-                labels = torch.zeros(len(candidate_items), dtype=torch.float32)
-                labels[0] = 1.0
-
-                user_feats = self.feature_store.get_user_features(user_ids_t)
-                item_feats = self.feature_store.get_item_features(item_ids_t)
-                batch = {
-                    "user_id": user_ids_t,
-                    "item_id": item_ids_t,
-                    "label": labels,
-                    **{f"user_{k}": v for k, v in user_feats.items()},
-                    **{f"item_{k}": v for k, v in item_feats.items()},
-                }
-                yield batch
-
-
-class RankingDataModule(lit.LightningDataModule):
-    def __init__(
-        self,
-        paths: DataPaths,
-        feature_cfg: FeatureConfig,
-        user_encoders: Dict[str, CategoryEncoder],
-        item_encoders: Dict[str, CategoryEncoder],
-        batch_size: int = 1024,
-        num_workers: int = 0,
-        chunksize: int = 200_000,
-        negatives_per_pos: int = 4,
-    ) -> None:
-        super().__init__()
-        self.paths = paths
-        self.feature_cfg = feature_cfg
-        self.user_encoders = user_encoders
-        self.item_encoders = item_encoders
-        self.batch_size = batch_size
-        self.num_workers = num_workers
-        self.chunksize = chunksize
-        self.negatives_per_pos = negatives_per_pos
-
-        self.feature_store: Optional[FeatureStore] = None
-        self.item_id_pool: Optional[np.ndarray] = None
-
-    def setup(self, stage: Optional[str] = None) -> None:
-        users_df = read_table(self.paths.users_path)
-        items_df = read_table(self.paths.items_path)
-        self.feature_store = FeatureStore(
-            users_df, items_df, self.user_encoders, self.item_encoders, self.feature_cfg
-        )
-        item_ids = self.item_encoders[self.feature_cfg.item_id_col].transform(
-            items_df[self.feature_cfg.item_id_col].astype(str).tolist()
-        )
-        self.item_id_pool = np.array(item_ids, dtype=np.int64)
-
-    def train_dataloader(self) -> DataLoader:
-        if self.feature_store is None:
-            raise RuntimeError("setup() must be called before train_dataloader")
-        dataset = RankingIterableDataset(
-            interactions_path=self.paths.interactions_train_path,
-            feature_cfg=self.feature_cfg,
-            user_encoders=self.user_encoders,
-            item_encoders=self.item_encoders,
-            feature_store=self.feature_store,
-            chunksize=self.chunksize,
-            batch_size=self.batch_size,
-            negatives_per_pos=self.negatives_per_pos,
-            item_id_pool=self.item_id_pool,
-        )
-        return DataLoader(
-            dataset,
-            batch_size=None,
-            num_workers=self.num_workers,
-        )
-
-    def val_dataloader(self) -> Optional[DataLoader]:
-        if self.feature_store is None:
-            raise RuntimeError("setup() must be called before val_dataloader")
-        if not self.paths.interactions_val_path:
-            return None
-        dataset = RankingEvalDataset(
-            interactions_path=self.paths.interactions_val_path,
-            feature_cfg=self.feature_cfg,
-            user_encoders=self.user_encoders,
-            item_encoders=self.item_encoders,
-            feature_store=self.feature_store,
-            chunksize=self.chunksize,
-            negatives_per_pos=self.negatives_per_pos,
-            item_id_pool=self.item_id_pool,
-        )
-        return DataLoader(
-            dataset,
-            batch_size=None,
-            num_workers=self.num_workers,
-        )
+    dataset = InteractionIterableDataset(
+        interactions_path=paths.interactions_train_path,
+        feature_cfg=feature_cfg,
+        user_encoders=user_encoders,
+        item_encoders=item_encoders,
+        feature_store=feature_store,
+        chunksize=chunksize,
+        batch_size=batch_size,
+        negatives_per_pos=negatives_per_pos,
+        item_id_pool=item_id_pool,
+        include_labels=True,
+    )
+    loader = DataLoader(dataset, batch_size=None, num_workers=num_workers)
+    return loader, feature_store, item_id_pool

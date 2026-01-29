@@ -12,8 +12,8 @@ from .common.config import (
     ensure_dataset_args,
     load_yaml_config,
 )
-from .retrieval import train as retrieval_train
-from .ranking import train as ranking_train
+from .retrieval.train import train as retrieval_train
+from .ranking.train import train as ranking_train
 
 # Build argument parser
 def parse_args() -> argparse.Namespace:
@@ -47,7 +47,7 @@ def main() -> None:
     if cfg:
         retrieval_args = apply_stage_config(retrieval_args, cfg, "retrieval")
 
-    retrieval_ckpt = retrieval_train.train(retrieval_args)
+    retrieval_ckpt = retrieval_train(retrieval_args)
 
     ranking_args = argparse.Namespace(**vars(args))
     ranking_args.save_checkpoint = args.ranking_checkpoint
@@ -55,8 +55,7 @@ def main() -> None:
         ranking_args = apply_stage_config(ranking_args, cfg, "ranking")
     ranking_args.init_from_retrieval = retrieval_ckpt
 
-    ranking_train.train(ranking_args)
-
+    ranking_train(ranking_args)
 
 if __name__ == "__main__":
     main()
