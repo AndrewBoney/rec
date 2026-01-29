@@ -78,7 +78,11 @@ def _flatten_config(cfg: Dict[str, Any], stage: Optional[str] = None) -> Dict[st
     dataset = cfg.get("dataset", {})
     merged.update(dataset.get("paths", {}))
 
-    columns = dataset.get("columns", {})
+    base_columns = dataset.get("columns", {})
+    stage_columns = {}
+    if stage:
+        stage_columns = cfg.get(stage, {}).get("columns", {})
+    columns = {**base_columns, **stage_columns}
     column_map = {
         "user_id": "user_id_col",
         "item_id": "item_id_col",
@@ -105,10 +109,18 @@ def apply_config(args: argparse.Namespace, cfg: Dict[str, Any], stage: Optional[
     return _apply_config_values(args, values)
 
 
-def apply_dataset_config(args: argparse.Namespace, cfg: Dict[str, Any]) -> argparse.Namespace:
+def apply_dataset_config(
+    args: argparse.Namespace,
+    cfg: Dict[str, Any],
+    stage: Optional[str] = None,
+) -> argparse.Namespace:
     dataset = cfg.get("dataset", {})
     paths = dataset.get("paths", {})
-    columns = dataset.get("columns", {})
+    base_columns = dataset.get("columns", {})
+    stage_columns = {}
+    if stage:
+        stage_columns = cfg.get(stage, {}).get("columns", {})
+    columns = {**base_columns, **stage_columns}
 
     _apply_config_values(args, paths)
     column_aliases = {k: v for k, v in columns.items() if k in {"user_id", "item_id"}}
@@ -137,9 +149,24 @@ def apply_shared_config(args: argparse.Namespace, cfg: Dict[str, Any]) -> argpar
 
 def apply_stage_config(args: argparse.Namespace, cfg: Dict[str, Any], stage: str) -> argparse.Namespace:
     stage_cfg = cfg.get(stage, {})
+    columns = stage_cfg.get("columns", {})
     model_cfg = stage_cfg.get("model", {})
     training_cfg = stage_cfg.get("training", {})
 
+    column_aliases = {k: v for k, v in columns.items() if k in {"user_id", "item_id"}}
+    if column_aliases:
+        _apply_config_values(
+            args,
+            column_aliases,
+            key_map={
+                "user_id": "user_id_col",
+                "item_id": "item_id_col",
+            },
+        )
+    _apply_config_values(
+        args,
+        {k: v for k, v in columns.items() if k not in {"user_id", "item_id"}},
+    )
     _apply_config_values(args, model_cfg)
     _apply_config_values(
         args,

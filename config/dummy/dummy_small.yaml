@@ -5,6 +5,12 @@ dataset:
     items: data/dummy/prepared/items.parquet
     interactions_train: data/dummy/prepared/interactions_train.parquet
     interactions_val: data/dummy/prepared/interactions_val.parquet
+
+shared:
+  seed: 42
+  encoder_cache: encoders.json
+
+retrieval:
   columns:
     user_id: user_id
     item_id: item_id
@@ -19,12 +25,6 @@ dataset:
     interaction_user_col: user_id
     interaction_item_col: item_id
     interaction_time_col: timestamp
-
-shared:
-  seed: 42
-  encoder_cache: encoders.json
-
-retrieval:
   model:
     embedding_dim: 64
     hidden_dims:
@@ -48,6 +48,20 @@ retrieval:
     checkpoint: retrieval.ckpt
 
 ranking:
+  columns:
+    user_id: user_id
+    item_id: item_id
+    user_cat_cols:
+      - user_group
+      - region
+      - age_group
+    item_cat_cols:
+      - category
+      - price_band
+      - style
+    interaction_user_col: user_id
+    interaction_item_col: item_id
+    interaction_time_col: timestamp
   model:
     embedding_dim: 64
     hidden_dims:

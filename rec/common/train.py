@@ -192,14 +192,23 @@ def evaluate(
     with torch.no_grad():
         item_emb = model.item_tower(item_features)
     user_ids = list(user_item_map.keys())
-    max_k = max(ks) if ks else 0
+    ks_list = sorted({int(k) for k in ks if int(k) > 0})
+    if not ks_list:
+        return {}
+    num_items = item_emb.size(0)
+    ks_list = [k for k in ks_list if k <= num_items]
+    if not ks_list:
+        return {}
+    max_k = max(ks_list)
     topk_indices = []
     relevant_indices = []
     with torch.no_grad():
         for uid in user_ids:
             user_feats = feature_store.get_user_features(torch.tensor([uid], dtype=torch.long))
             user_feats = to_device(user_feats, device)
-            scores = model.score_all(user_feats, item_emb)
+            user_emb = model.user_tower(user_feats)
+            scores = model.score_all(user_emb, item_emb)
+            scores = scores.squeeze(0)
             topk = torch.topk(scores, max_k).indices
             topk_indices.append(topk.cpu())
             rel_ids = torch.tensor(user_item_map[uid], dtype=torch.long)
@@ -208,5 +217,5 @@ def evaluate(
     if not topk_indices:
         return {}
     topk_tensor = torch.stack(topk_indices, dim=0)
-    metrics = aggregate_ranking_metrics(topk_tensor, relevant_indices, ks)
+    metrics = aggregate_ranking_metrics(topk_tensor, relevant_indices, ks_list)
     return metrics
