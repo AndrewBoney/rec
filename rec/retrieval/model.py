@@ -8,7 +8,6 @@ import torch.nn as nn
 
 from ..common.model import TowerConfig, TwoTowerEncoder
 
-
 class TwoTowerRetrieval(nn.Module):
     def __init__(
         self,
@@ -28,14 +27,22 @@ class TwoTowerRetrieval(nn.Module):
         user_emb = self.user_tower(user_features)
         item_emb = self.item_tower(item_features)
         scores = user_emb @ item_emb.T
-        return scores
+        return scores / self.temperature
+
+    def score_all(
+        self,
+        user_emb: torch.Tensor,
+        item_emb: torch.Tensor,
+    ) -> torch.Tensor:
+        scores = user_emb @ item_emb.T
+        return scores / self.temperature
 
     def compute_loss(self, batch: Dict[str, torch.Tensor]) -> torch.Tensor:
         user_prefix = "user_"
         item_prefix = "item_"
         user_features = {k[len(user_prefix):]: v for k, v in batch.items() if k.startswith(user_prefix)}
         item_features = {k[len(item_prefix):]: v for k, v in batch.items() if k.startswith(item_prefix)}
-        scores = self.forward(user_features, item_features) / self.temperature
+        scores = self.forward(user_features, item_features) 
         labels = torch.arange(scores.size(0), device=scores.device)
         loss = F.cross_entropy(scores, labels)
         return loss

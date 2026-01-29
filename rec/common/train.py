@@ -178,50 +178,13 @@ def load_inference_bundle(artifact_dir: str) -> Dict[str, Any]:
         "item_encoders": item_encoders,
     }
 
-# TODO: simplify below by implementing a method in both ranking and retrieval methods that convert user and item embs to scores 
-def _score_all_items_retrieval(
-    model,
-    user_features: Dict[str, torch.Tensor],
-    item_emb: torch.Tensor,
-    batch_size: int = 4096,
-) -> torch.Tensor:
-    user_emb = model.user_tower(user_features)
-    scores = []
-    for start in range(0, item_emb.size(0), batch_size):
-        end = start + batch_size
-        chunk = item_emb[start:end]
-        chunk_scores = (user_emb @ chunk.T).squeeze(0)
-        scores.append(chunk_scores)
-    return torch.cat(scores, dim=0)
-
-
-def _score_all_items_ranking(
-    model,
-    user_features: Dict[str, torch.Tensor],
-    item_emb: torch.Tensor,
-    batch_size: int = 4096,
-) -> torch.Tensor:
-    user_emb = model.user_tower(user_features)
-    scores = []
-    for start in range(0, item_emb.size(0), batch_size):
-        end = start + batch_size
-        chunk = item_emb[start:end]
-        expanded_user = user_emb.expand(chunk.size(0), -1)
-        joint = torch.cat(
-            [expanded_user, chunk, expanded_user * chunk, torch.abs(expanded_user - chunk)], dim=-1
-        )
-        chunk_scores = model.scorer(joint).squeeze(-1)
-        scores.append(chunk_scores)
-    return torch.cat(scores, dim=0)
-
-
-def evaluate_retrieval(
+# TODO: add batching to prevent risk of OOM
+def evaluate(
     model,
     feature_store: FeatureStore,
     user_item_map: Dict[int, List[int]],
     device: torch.device,
     ks: Iterable[int],
-    batch_size: int = 4096,
 ) -> Dict[str, float]:
     model.eval()
     item_features = feature_store.get_all_item_features()
@@ -236,41 +199,7 @@ def evaluate_retrieval(
         for uid in user_ids:
             user_feats = feature_store.get_user_features(torch.tensor([uid], dtype=torch.long))
             user_feats = to_device(user_feats, device)
-            scores = _score_all_items_retrieval(model, user_feats, item_emb, batch_size=batch_size)
-            topk = torch.topk(scores, max_k).indices
-            topk_indices.append(topk.cpu())
-            rel_ids = torch.tensor(user_item_map[uid], dtype=torch.long)
-            rel_indices = feature_store.map_item_ids_to_indices(rel_ids)
-            relevant_indices.append(rel_indices)
-    if not topk_indices:
-        return {}
-    topk_tensor = torch.stack(topk_indices, dim=0)
-    metrics = aggregate_ranking_metrics(topk_tensor, relevant_indices, ks)
-    return metrics
-
-
-def evaluate_ranking(
-    model,
-    feature_store: FeatureStore,
-    user_item_map: Dict[int, List[int]],
-    device: torch.device,
-    ks: Iterable[int],
-    batch_size: int = 4096,
-) -> Dict[str, float]:
-    model.eval()
-    item_features = feature_store.get_all_item_features()
-    item_features = to_device(item_features, device)
-    with torch.no_grad():
-        item_emb = model.item_tower(item_features)
-    user_ids = list(user_item_map.keys())
-    max_k = max(ks) if ks else 0
-    topk_indices = []
-    relevant_indices = []
-    with torch.no_grad():
-        for uid in user_ids:
-            user_feats = feature_store.get_user_features(torch.tensor([uid], dtype=torch.long))
-            user_feats = to_device(user_feats, device)
-            scores = _score_all_items_ranking(model, user_feats, item_emb, batch_size=batch_size)
+            scores = model.score_all(user_feats, item_emb)
             topk = torch.topk(scores, max_k).indices
             topk_indices.append(topk.cpu())
             rel_ids = torch.tensor(user_item_map[uid], dtype=torch.long)

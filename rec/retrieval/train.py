@@ -14,12 +14,12 @@ from ..common.config import (
 )
 from ..common.model import TowerConfig
 from ..common.utils import set_seed, to_device
-from ..common.train_utils import (
+from ..common.train import (
     build_cardinalities,
     build_feature_config,
     build_paths,
     build_user_item_map,
-    evaluate_retrieval,
+    evaluate,
     get_device,
     init_wandb,
     load_or_build_encoders,
@@ -107,7 +107,7 @@ def train(args: argparse.Namespace) -> str:
                     run.log({"train/loss": loss.item(), "train/epoch": epoch}, step=global_step)
 
             if args.eval_steps > 0 and global_step % args.eval_steps == 0:
-                metrics = evaluate_retrieval(
+                metrics = evaluate(
                     model,
                     feature_store,
                     user_item_map,
@@ -119,10 +119,10 @@ def train(args: argparse.Namespace) -> str:
                 model.train()
 
         avg_loss = total_loss / max(1, steps)
-        metrics = evaluate_retrieval(
+        metrics = evaluate(
             model,
             feature_store,
-            user_item_map,
+            user_item_map,  
             device=device,
             ks=[5, 10, 20],
         )

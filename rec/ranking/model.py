@@ -30,6 +30,20 @@ class TwoTowerRanking(nn.Module):
         joint = torch.cat([user_emb, item_emb, user_emb * item_emb, torch.abs(user_emb - item_emb)], dim=-1)
         return self.scorer(joint).squeeze(-1)
 
+    def score_all(
+        self,
+        user_emb: torch.Tensor,
+        item_emb: torch.Tensor,
+    ) -> torch.Tensor:
+        user_emb_exp = user_emb.unsqueeze(1).expand(-1, item_emb.size(0), -1)
+        item_emb_exp = item_emb.unsqueeze(0).expand(user_emb.size(0), -1, -1)
+        joint = torch.cat(
+            [user_emb_exp, item_emb_exp, user_emb_exp * item_emb_exp, torch.abs(user_emb_exp - item_emb_exp)],
+            dim=-1,
+        )
+        scores = self.scorer(joint).squeeze(-1)
+        return scores
+
     def compute_loss(self, batch: Dict[str, torch.Tensor]) -> torch.Tensor:
         user_prefix = "user_"
         item_prefix = "item_"
