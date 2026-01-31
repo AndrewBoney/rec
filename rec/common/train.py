@@ -24,6 +24,7 @@ def build_feature_config(args) -> FeatureConfig:
         item_cat_cols=args.item_cat_cols,
         interaction_user_col=args.interaction_user_col,
         interaction_item_col=args.interaction_item_col,
+        interaction_label_col=getattr(args, "interaction_label_col", None),
     )
 
 

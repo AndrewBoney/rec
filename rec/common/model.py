@@ -1,4 +1,5 @@
 from __future__ import annotations
+import torch.nn.functional as F
 
 from dataclasses import dataclass
 from typing import Dict, List, Optional
@@ -30,8 +31,7 @@ class MLP(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.net(x)
 
-
-class TwoTowerEncoder(nn.Module):
+class BaseEncoder(nn.Module):
     def __init__(
         self,
         feature_cardinalities: Dict[str, int],
@@ -45,6 +45,14 @@ class TwoTowerEncoder(nn.Module):
                 for name, cardinality in feature_cardinalities.items()
             }
         )
+
+class CatTwoTowerEncoder(BaseEncoder):
+    def __init__(
+        self,
+        feature_cardinalities: Dict[str, int],
+        config: TowerConfig,
+    ) -> None:
+        super().__init__(feature_cardinalities, config)
         input_dim = config.embedding_dim * len(self.feature_names)
         hidden_dims = config.hidden_dims or [128, 64]
         self.mlp = MLP(input_dim, hidden_dims, config.dropout)
@@ -53,5 +61,31 @@ class TwoTowerEncoder(nn.Module):
     def forward(self, features: Dict[str, torch.Tensor]) -> torch.Tensor:
         emb_list = [self.embeddings[name](features[name]) for name in self.feature_names]
         x = torch.cat(emb_list, dim=-1)
+        x = self.mlp(x)
+        return x
+
+class StackedTwoTowerEncoder(BaseEncoder):
+    def __init__(
+        self,
+        feature_cardinalities: Dict[str, int],
+        config: TowerConfig,
+    ) -> None:
+        super().__init__(feature_cardinalities, config)
+        input_dim = config.embedding_dim
+        hidden_dims = config.hidden_dims or [128, 64]
+        self.mlp = MLP(input_dim, hidden_dims, config.dropout)
+        self.output_dim = hidden_dims[-1] if hidden_dims else input_dim
+
+        self.weights = nn.Parameter(torch.empty(config.embedding_dim, len(self.feature_names)))
+        nn.init.xavier_uniform_(self.weights)
+
+    def forward(self, features: Dict[str, torch.Tensor]) -> torch.Tensor:
+        embs = torch.stack(
+            [self.embeddings[name](features[name]) for name in self.feature_names],
+            dim=-1,
+        )
+        weights = F.softmax(self.weights, dim=1).unsqueeze(0)
+        weighted_embs = embs * weights
+        x = weighted_embs.sum(dim=-1)
         x = self.mlp(x)
         return x

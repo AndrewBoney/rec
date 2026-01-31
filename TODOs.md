@@ -1,7 +1,8 @@
 - ~~refactor from pytorch lightning to plain torch.~~
 - ~~Add wandb logging. This should also enable storing and reusing the model, in a way where encoders (i.e. conversation of features into indexes) can also be reapplied to a new dataset for inference.~~ 
-- Right now in the YAML and CLI setup it assumes that retrieval and ranking have the same columns. I want to have the ability to do use different columns for retrieval and ranking.  
-- Implement alternative model architectures, e.g. combining embeddings with stacked + learned weightings. 
+- ~~Right now in the YAML and CLI setup it assumes that retrieval and ranking have the same columns. I want to have the ability to do use different columns for retrieval and ranking.~~  
+- ~~Implement alternative model architectures, e.g. combining embeddings with stacked + learned weightings.~~ 
+- Add data prep script for h & m.
 - Ability to use text and image encoders for cols given in YAML / CLI, with use of an embedding model from HuggingFace
 - Sequential column processing. A few ways to do this. I want to read papers like GPTRec before getting into this. 
 - Add labels to data... need to first investigate what these labels should be / indicate. 

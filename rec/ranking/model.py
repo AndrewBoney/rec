@@ -3,10 +3,9 @@ from __future__ import annotations
 from typing import Dict
 
 import torch
-import torch.nn.functional as F
 import torch.nn as nn
 
-from ..common.model import MLP, TowerConfig, TwoTowerEncoder
+from ..common.model import MLP, TowerConfig, StackedTwoTowerEncoder as TwoTowerEncoder
 
 
 class TwoTowerRanking(nn.Module):
@@ -16,6 +15,7 @@ class TwoTowerRanking(nn.Module):
         item_cardinalities: Dict[str, int],
         tower_config: TowerConfig,
         lr: float = 1e-3,
+        loss_func: str | None = None,
     ) -> None:
         super().__init__()
         self.user_tower = TwoTowerEncoder(user_cardinalities, tower_config)
@@ -23,6 +23,13 @@ class TwoTowerRanking(nn.Module):
         joint_dim = self.user_tower.output_dim + self.item_tower.output_dim
         self.scorer = MLP(joint_dim * 2, [128, 64, 1], tower_config.dropout, activate_last=False)
         self.lr = lr
+        self.loss_func = loss_func or "binary_cross_entropy"
+        if self.loss_func == "binary_cross_entropy":
+            self.loss_fn = nn.BCEWithLogitsLoss()
+        elif self.loss_func == "mse":
+            self.loss_fn = nn.MSELoss()
+        else:
+            raise ValueError(f"Unsupported ranking loss_func: {self.loss_func}")
 
     def forward(self, user_features: Dict[str, torch.Tensor], item_features: Dict[str, torch.Tensor]) -> torch.Tensor:
         user_emb = self.user_tower(user_features)
@@ -51,8 +58,7 @@ class TwoTowerRanking(nn.Module):
         item_features = {k[len(item_prefix):]: v for k, v in batch.items() if k.startswith(item_prefix)}
         labels = batch["label"]
         logits = self.forward(user_features, item_features)
-        loss = F.binary_cross_entropy_with_logits(logits, labels)
-        return loss
+        return self.loss_fn(logits, labels)
 
 
 def load_retrieval_towers(ranking_model: TwoTowerRanking, retrieval_state: Dict[str, torch.Tensor]) -> None:

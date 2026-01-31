@@ -19,6 +19,7 @@ def build_base_parser(description: str) -> argparse.ArgumentParser:
     parser.add_argument("--item-cat-cols", nargs="*", default=["product_type_no", "graphical_appearance_no", "colour_group_code", "section_no", "garment_group_no"])
     parser.add_argument("--interaction-user-col", default="customer_id")
     parser.add_argument("--interaction-item-col", default="article_id")
+    parser.add_argument("--interaction-label-col", default=None)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--encoder-cache", default="encoders.json")
     parser.add_argument("--batch-size", type=int, default=1024)
@@ -31,6 +32,7 @@ def build_base_parser(description: str) -> argparse.ArgumentParser:
     parser.add_argument("--hidden-dims", nargs="*", type=int, default=[128, 64])
     parser.add_argument("--dropout", type=float, default=0.1)
     parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--loss-func", default=None, help="Loss function override (stage-dependent defaults apply)")
     parser.add_argument("--use-wandb", action="store_true", help="Enable Weights & Biases logging")
     parser.add_argument("--wandb-project", default="rec")
     parser.add_argument("--wandb-entity", default=None)
@@ -86,6 +88,7 @@ def _flatten_config(cfg: Dict[str, Any], stage: Optional[str] = None) -> Dict[st
     column_map = {
         "user_id": "user_id_col",
         "item_id": "item_id_col",
+        "label_col": "interaction_label_col",
     }
     merged.update({column_map.get(k, k): v for k, v in columns.items()})
 
@@ -123,7 +126,7 @@ def apply_dataset_config(
     columns = {**base_columns, **stage_columns}
 
     _apply_config_values(args, paths)
-    column_aliases = {k: v for k, v in columns.items() if k in {"user_id", "item_id"}}
+    column_aliases = {k: v for k, v in columns.items() if k in {"user_id", "item_id", "label_col"}}
     if column_aliases:
         _apply_config_values(
             args,
@@ -131,6 +134,7 @@ def apply_dataset_config(
             key_map={
                 "user_id": "user_id_col",
                 "item_id": "item_id_col",
+                "label_col": "interaction_label_col",
             },
         )
     _apply_config_values(
@@ -153,7 +157,7 @@ def apply_stage_config(args: argparse.Namespace, cfg: Dict[str, Any], stage: str
     model_cfg = stage_cfg.get("model", {})
     training_cfg = stage_cfg.get("training", {})
 
-    column_aliases = {k: v for k, v in columns.items() if k in {"user_id", "item_id"}}
+    column_aliases = {k: v for k, v in columns.items() if k in {"user_id", "item_id", "label_col"}}
     if column_aliases:
         _apply_config_values(
             args,
@@ -161,6 +165,7 @@ def apply_stage_config(args: argparse.Namespace, cfg: Dict[str, Any], stage: str
             key_map={
                 "user_id": "user_id_col",
                 "item_id": "item_id_col",
+                "label_col": "interaction_label_col",
             },
         )
     _apply_config_values(

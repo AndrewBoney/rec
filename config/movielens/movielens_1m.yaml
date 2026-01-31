@@ -1,10 +1,10 @@
 dataset:
-  name: dummy
+  name: movielens-1m
   paths:
-    users: data/dummy/prepared/users.parquet
-    items: data/dummy/prepared/items.parquet
-    interactions_train: data/dummy/prepared/interactions_train.parquet
-    interactions_val: data/dummy/prepared/interactions_val.parquet
+    users: data/movielens/prepared/users.parquet
+    items: data/movielens/prepared/items.parquet
+    interactions_train: data/movielens/prepared/interactions_train.parquet
+    interactions_val: data/movielens/prepared/interactions_val.parquet
 
 shared:
   seed: 42
@@ -15,17 +15,17 @@ retrieval:
     user_id: user_id
     item_id: item_id
     user_cat_cols:
-      - user_group
-      - region
+      - gender
       - age_group
+      - occupation
+      - zip_prefix
     item_cat_cols:
-      - category
-      - price_band
-      - style
+      - genre_primary
+      - year_bucket
     interaction_user_col: user_id
     interaction_item_col: item_id
     interaction_time_col: timestamp
-    label_col: null
+    label_col: rating
   model:
     embedding_dim: 64
     hidden_dims:
@@ -39,13 +39,14 @@ retrieval:
     max_epochs: 3
     lr: 0.001
     temperature: 0.05
+    loss_func: cross_entropy
     eval_steps: 200
     log_steps: 50
     artifact_dir: artifacts/retrieval
     use_wandb: true
     wandb_project: rec
     wandb_entity: null
-    wandb_run_name: retrieval-dummy-small
+    wandb_run_name: retrieval-movielens-1m
     checkpoint: retrieval.ckpt
 
 ranking:
@@ -53,16 +54,17 @@ ranking:
     user_id: user_id
     item_id: item_id
     user_cat_cols:
-      - user_group
-      - region
+      - gender
       - age_group
+      - occupation
+      - zip_prefix
     item_cat_cols:
-      - category
-      - price_band
-      - style
+      - genre_primary
+      - year_bucket
     interaction_user_col: user_id
     interaction_item_col: item_id
     interaction_time_col: timestamp
+    label_col: rating
   model:
     embedding_dim: 64
     hidden_dims:
@@ -75,12 +77,13 @@ ranking:
     chunksize: 200000
     max_epochs: 3
     lr: 0.001
-    negatives_per_pos: 4
+    negatives_per_pos: 0
+    loss_func: mse
     eval_steps: 200
     log_steps: 50
     artifact_dir: artifacts/ranking
     use_wandb: true
     wandb_project: rec
     wandb_entity: null
-    wandb_run_name: ranking-dummy-small
+    wandb_run_name: ranking-movielens-1m
     checkpoint: ranking.ckpt

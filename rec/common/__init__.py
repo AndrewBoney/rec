@@ -9,7 +9,7 @@ from .config import (
     load_yaml_config,
 )
 from .data import DataPaths, FeatureStore
-from .model import MLP, TowerConfig, TwoTowerEncoder
+from .model import MLP, TowerConfig, StackedTwoTowerEncoder, CatTwoTowerEncoder
 from .utils import CategoryEncoder, FeatureConfig, build_category_maps, load_encoders, read_parquet_batches, read_table, save_encoders
 
 __all__ = [
@@ -17,7 +17,8 @@ __all__ = [
     "FeatureStore",
     "MLP",
     "TowerConfig",
-    "TwoTowerEncoder",
+    "StackedTwoTowerEncoder",
+    "CatTwoTowerEncoder",
     "build_base_parser",
     "add_retrieval_args",
     "add_ranking_args",

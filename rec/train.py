@@ -61,6 +61,7 @@ def train(args: argparse.Namespace, stage: str) -> str:
             tower_config=tower_cfg,
             lr=args.lr,
             temperature=args.temperature,
+            loss_func=getattr(args, "loss_func", None),
         )
         train_loader, feature_store = build_retrieval_dataloader(
             paths=paths,
@@ -80,6 +81,7 @@ def train(args: argparse.Namespace, stage: str) -> str:
             item_cardinalities=item_cardinalities,
             tower_config=tower_cfg,
             lr=args.lr,
+            loss_func=getattr(args, "loss_func", None),
         )
         if args.init_from_retrieval:
             retrieval_state = _load_retrieval_state(args.init_from_retrieval)

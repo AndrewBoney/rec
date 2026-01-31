@@ -129,6 +129,7 @@ class InteractionIterableDataset(IterableDataset):
             item_ids = self.item_encoders[self.feature_cfg.item_id_col].transform(
                 chunk[self.feature_cfg.interaction_item_col].astype(str).tolist()
             )
+            label_col = self.feature_cfg.interaction_label_col
 
             for start in range(0, len(user_ids), self.batch_size):
                 end = start + self.batch_size
@@ -144,7 +145,11 @@ class InteractionIterableDataset(IterableDataset):
                     **{f"item_{k}": v for k, v in item_feats.items()},
                 }
                 if self.include_labels:
-                    batch["label"] = torch.ones(len(user_ids_t), dtype=torch.float32)
+                    if label_col and label_col in chunk.columns:
+                        labels = chunk[label_col].iloc[start:end].to_numpy(dtype=np.float32, copy=False)
+                        batch["label"] = torch.from_numpy(labels)
+                    else:
+                        batch["label"] = torch.ones(len(user_ids_t), dtype=torch.float32)
                 yield batch
 
                 for _ in range(self.negatives_per_pos):
