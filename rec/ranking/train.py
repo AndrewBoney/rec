@@ -9,7 +9,7 @@ from ..common.config import (
     ensure_dataset_args,
     load_yaml_config,
 )
-from ..train import train as stage_train
+from ..common.train import train as stage_train
 
 
 def parse_args() -> argparse.Namespace:

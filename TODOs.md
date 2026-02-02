@@ -3,7 +3,8 @@
 - ~~Right now in the YAML and CLI setup it assumes that retrieval and ranking have the same columns. I want to have the ability to do use different columns for retrieval and ranking.~~  
 - ~~Implement alternative model architectures, e.g. combining embeddings with stacked + learned weightings.~~ 
 - Add data prep script for h & m.
-- Ability to use text and image encoders for cols given in YAML / CLI, with use of an embedding model from HuggingFace
+- Add better metrics incl. for explicit data e.g. movielens
+- Ability to use text and image encoders for cols given in YAML / CLI, with use of an embedding model from HuggingFace.
 - Sequential column processing. A few ways to do this. I want to read papers like GPTRec before getting into this. 
-- Add labels to data... need to first investigate what these labels should be / indicate. 
+- Add labels to implicit data... need to first investigate what these labels should be / indicate. 
 - adjust it so that imports follow my preferences (i.e. alias -> \n -> direct -> \n -> from (pip libs) -> \n -> from (local libs))

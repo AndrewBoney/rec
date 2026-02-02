@@ -81,7 +81,7 @@ class FeatureStore:
         indices = torch.clamp(indices - 1, min=0)
         return indices
 
-
+# TODO: remove user_encoders and item_encoders from here... these are already in feature store
 class InteractionIterableDataset(IterableDataset):
     def __init__(
         self,
