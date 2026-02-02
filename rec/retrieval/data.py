@@ -19,9 +19,6 @@ def build_retrieval_dataloader(
     feature_store = build_feature_store(paths, feature_cfg, user_encoders, item_encoders)
     dataset = InteractionIterableDataset(
         interactions_path=paths.interactions_train_path,
-        feature_cfg=feature_cfg,
-        user_encoders=user_encoders,
-        item_encoders=item_encoders,
         feature_store=feature_store,
         chunksize=chunksize,
         batch_size=batch_size,

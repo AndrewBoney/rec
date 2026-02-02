@@ -31,6 +31,8 @@ class FeatureStore:
         feature_cfg: FeatureConfig,
     ) -> None:
         self.feature_cfg = feature_cfg
+        self.user_encoders = user_encoders
+        self.item_encoders = item_encoders
         self.user_features = encode_dataframe(
             user_df,
             user_encoders,
@@ -81,14 +83,10 @@ class FeatureStore:
         indices = torch.clamp(indices - 1, min=0)
         return indices
 
-# TODO: remove user_encoders and item_encoders from here... these are already in feature store
 class InteractionIterableDataset(IterableDataset):
     def __init__(
         self,
         interactions_path: str,
-        feature_cfg: FeatureConfig,
-        user_encoders: Dict[str, CategoryEncoder],
-        item_encoders: Dict[str, CategoryEncoder],
         feature_store: FeatureStore,
         chunksize: int = 200_000,
         batch_size: int = 2048,
@@ -98,10 +96,10 @@ class InteractionIterableDataset(IterableDataset):
     ) -> None:
         super().__init__()
         self.interactions_path = interactions_path
-        self.feature_cfg = feature_cfg
-        self.user_encoders = user_encoders
-        self.item_encoders = item_encoders
         self.feature_store = feature_store
+        self.feature_cfg = feature_store.feature_cfg
+        self.user_encoders = feature_store.user_encoders
+        self.item_encoders = feature_store.item_encoders
         self.chunksize = chunksize
         self.batch_size = batch_size
         self.negatives_per_pos = negatives_per_pos
