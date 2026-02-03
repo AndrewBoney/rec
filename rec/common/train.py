@@ -43,32 +43,30 @@ def load_or_build_encoders(
     item_cols: List[str],
 ) -> Tuple[Dict[str, CategoryEncoder], Dict[str, CategoryEncoder]]:
     encoder_cache_path = args.encoder_cache
-    if os.path.exists(encoder_cache_path + ".users") and os.path.exists(encoder_cache_path + ".items"):
-        user_encoders = load_encoders(encoder_cache_path + ".users")
-        item_encoders = load_encoders(encoder_cache_path + ".items")
-        missing_user = [col for col in user_cols if col not in user_encoders]
-        missing_item = [col for col in item_cols if col not in item_encoders]
-        if missing_user or missing_item:
-            user_encoders, item_encoders = build_category_maps(
-                args.users,
-                args.items,
-                args.interactions_train,
-                feature_cfg,
-                chunksize=args.chunksize,
-            )
-            save_encoders(encoder_cache_path + ".users", user_encoders)
-            save_encoders(encoder_cache_path + ".items", item_encoders)
-    else:
-        user_encoders, item_encoders = build_category_maps(
+    users_cache_path = encoder_cache_path + ".users"
+    items_cache_path = encoder_cache_path + ".items"
+
+    def _build_and_save() -> Tuple[Dict[str, CategoryEncoder], Dict[str, CategoryEncoder]]:
+        user_encs, item_encs = build_category_maps(
             args.users,
             args.items,
             args.interactions_train,
             feature_cfg,
             chunksize=args.chunksize,
         )
-        save_encoders(encoder_cache_path + ".users", user_encoders)
-        save_encoders(encoder_cache_path + ".items", item_encoders)
-    return user_encoders, item_encoders
+        save_encoders(users_cache_path, user_encs)
+        save_encoders(items_cache_path, item_encs)
+        return user_encs, item_encs
+
+    if os.path.exists(users_cache_path) and os.path.exists(items_cache_path):
+        user_encoders = load_encoders(users_cache_path)
+        item_encoders = load_encoders(items_cache_path)
+        missing_user = [col for col in user_cols if col not in user_encoders]
+        missing_item = [col for col in item_cols if col not in item_encoders]
+        if not missing_user and not missing_item:
+            return user_encoders, item_encoders
+
+    return _build_and_save()
 
 
 def build_paths(args) -> DataPaths:

@@ -6,6 +6,27 @@ from typing import Any, Dict, Optional
 from .utils import load_config
 
 
+_COLUMN_ALIAS_MAP = {
+    "user_id": "user_id_col",
+    "item_id": "item_id_col",
+    "label_col": "interaction_label_col",
+}
+
+
+def _apply_column_config(
+    args: argparse.Namespace,
+    columns: Dict[str, Any],
+) -> argparse.Namespace:
+    column_aliases = {k: v for k, v in columns.items() if k in _COLUMN_ALIAS_MAP}
+    if column_aliases:
+        _apply_config_values(args, column_aliases, key_map=_COLUMN_ALIAS_MAP)
+    _apply_config_values(
+        args,
+        {k: v for k, v in columns.items() if k not in _COLUMN_ALIAS_MAP},
+    )
+    return args
+
+
 def build_base_parser(description: str) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=description)
     parser.add_argument("--config", default=None, help="Path to YAML config file")
@@ -92,12 +113,7 @@ def _flatten_config(cfg: Dict[str, Any], stage: Optional[str] = None) -> Dict[st
     if stage:
         stage_columns = cfg.get(stage, {}).get("columns", {})
     columns = {**base_columns, **stage_columns}
-    column_map = {
-        "user_id": "user_id_col",
-        "item_id": "item_id_col",
-        "label_col": "interaction_label_col",
-    }
-    merged.update({column_map.get(k, k): v for k, v in columns.items()})
+    merged.update({_COLUMN_ALIAS_MAP.get(k, k): v for k, v in columns.items()})
 
     merged.update(cfg.get("shared", {}))
 
@@ -133,21 +149,7 @@ def apply_dataset_config(
     columns = {**base_columns, **stage_columns}
 
     _apply_config_values(args, paths)
-    column_aliases = {k: v for k, v in columns.items() if k in {"user_id", "item_id", "label_col"}}
-    if column_aliases:
-        _apply_config_values(
-            args,
-            column_aliases,
-            key_map={
-                "user_id": "user_id_col",
-                "item_id": "item_id_col",
-                "label_col": "interaction_label_col",
-            },
-        )
-    _apply_config_values(
-        args,
-        {k: v for k, v in columns.items() if k not in {"user_id", "item_id"}},
-    )
+    _apply_column_config(args, columns)
 
     return args
 
@@ -164,21 +166,7 @@ def apply_stage_config(args: argparse.Namespace, cfg: Dict[str, Any], stage: str
     model_cfg = stage_cfg.get("model", {})
     training_cfg = stage_cfg.get("training", {})
 
-    column_aliases = {k: v for k, v in columns.items() if k in {"user_id", "item_id", "label_col"}}
-    if column_aliases:
-        _apply_config_values(
-            args,
-            column_aliases,
-            key_map={
-                "user_id": "user_id_col",
-                "item_id": "item_id_col",
-                "label_col": "interaction_label_col",
-            },
-        )
-    _apply_config_values(
-        args,
-        {k: v for k, v in columns.items() if k not in {"user_id", "item_id"}},
-    )
+    _apply_column_config(args, columns)
     _apply_config_values(args, model_cfg)
     _apply_config_values(
         args,
