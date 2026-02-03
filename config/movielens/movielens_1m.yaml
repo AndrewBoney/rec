@@ -70,6 +70,9 @@ ranking:
     hidden_dims:
       - 128
       - 64
+    scorer_hidden_dims:
+      - 128
+      - 64
     dropout: 0.1
   training:
     batch_size: 4096

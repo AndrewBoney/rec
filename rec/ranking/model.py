@@ -14,6 +14,7 @@ class TwoTowerRanking(nn.Module):
         user_cardinalities: Dict[str, int],
         item_cardinalities: Dict[str, int],
         tower_config: TowerConfig,
+        scorer_hidden_dims: list[int] | None = None,
         lr: float = 1e-3,
         loss_func: str | None = None,
     ) -> None:
@@ -21,7 +22,8 @@ class TwoTowerRanking(nn.Module):
         self.user_tower = TwoTowerEncoder(user_cardinalities, tower_config)
         self.item_tower = TwoTowerEncoder(item_cardinalities, tower_config)
         joint_dim = self.user_tower.output_dim + self.item_tower.output_dim
-        self.scorer = MLP(joint_dim * 2, [128, 64, 1], tower_config.dropout, activate_last=False)
+        scorer_hidden_dims = scorer_hidden_dims or [128, 64]
+        self.scorer = MLP(joint_dim * 2, scorer_hidden_dims + [1], tower_config.dropout, activate_last=False)
         self.lr = lr
         self.loss_func = loss_func or "binary_cross_entropy"
         if self.loss_func == "binary_cross_entropy":

@@ -31,6 +31,7 @@ class MLP(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.net(x)
 
+# TODO: implement EmbeddingBag version for high-cardinality features
 class BaseEncoder(nn.Module):
     def __init__(
         self,

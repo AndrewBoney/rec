@@ -50,6 +50,13 @@ def add_retrieval_args(parser: argparse.ArgumentParser) -> argparse.ArgumentPars
 def add_ranking_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     parser.add_argument("--negatives-per-pos", type=int, default=4)
     parser.add_argument("--init-from-retrieval", default=None)
+    parser.add_argument(
+        "--scorer-hidden-dims",
+        nargs="*",
+        type=int,
+        default=[128, 64],
+        help="Hidden layer sizes for the ranking scorer MLP (output layer is fixed to 1)",
+    )
     parser.add_argument("--save-checkpoint", default="ranking.ckpt")
     parser.add_argument("--artifact-dir", default=None)
     return parser

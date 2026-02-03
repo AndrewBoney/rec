@@ -9,10 +9,11 @@ from dotenv import load_dotenv
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 from tqdm import tqdm
 
-from .data import DataPaths, FeatureStore
-from .metrics import aggregate_ranking_metrics
+from .data import DataPaths, FeatureStore, InteractionIterableDataset
 from .model import TowerConfig
 from .utils import CategoryEncoder, FeatureConfig, build_category_maps, load_encoders, read_parquet_batches, save_encoders, set_seed, to_device
+from ..ranking.metrics import aggregate_pointwise_metrics
+from ..retrieval.metrics import aggregate_retrieval_metrics
 
 
 def get_device() -> torch.device:
@@ -86,7 +87,7 @@ def build_user_item_map(
     item_encoders: Dict[str, CategoryEncoder],
     chunksize: int = 200_000,
 ) -> Dict[int, List[int]]:
-    user_to_items: Dict[int, List[int]] = {}
+    user_to_items: Dict[int, set[int]] = {}
     for chunk in read_parquet_batches(interactions_path, chunksize):
         user_ids = user_encoders[feature_cfg.user_id_col].transform(
             chunk[feature_cfg.interaction_user_col].astype(str).tolist()
@@ -95,9 +96,9 @@ def build_user_item_map(
             chunk[feature_cfg.interaction_item_col].astype(str).tolist()
         )
         for uid, iid in zip(user_ids, item_ids):
-            bucket = user_to_items.setdefault(int(uid), [])
-            bucket.append(int(iid))
-    return user_to_items
+            bucket = user_to_items.setdefault(int(uid), set())
+            bucket.add(int(iid))
+    return {uid: sorted(items) for uid, items in user_to_items.items()}
 
 
 def init_wandb(args, stage: str) -> Optional[Any]:
@@ -191,11 +192,25 @@ def _load_retrieval_state(path: str) -> Dict[str, torch.Tensor]:
         return ckpt
     raise ValueError("Unsupported checkpoint format")
 
+def _map_user_items_to_indices(
+    user_item_map: Dict[int, List[int]],
+    feature_store: FeatureStore,
+) -> Dict[int, torch.Tensor]:
+    mapped: Dict[int, torch.Tensor] = {}
+    for uid, items in user_item_map.items():
+        if not items:
+            continue
+        item_ids = torch.tensor(items, dtype=torch.long)
+        mapped[uid] = feature_store.map_item_ids_to_indices(item_ids)
+    return mapped
+
+
 # TODO: add batching to prevent risk of OOM
-def evaluate(
+def evaluate_retrieval(
     model,
     feature_store: FeatureStore,
     user_item_map: Dict[int, List[int]],
+    seen_user_item_map: Dict[int, List[int]],
     device: torch.device,
     ks: Iterable[int],
 ) -> Dict[str, float]:
@@ -204,7 +219,7 @@ def evaluate(
     item_features = to_device(item_features, device)
     with torch.no_grad():
         item_emb = model.item_tower(item_features)
-    user_ids = list(user_item_map.keys())
+
     ks_list = sorted({int(k) for k in ks if int(k) > 0})
     if not ks_list:
         return {}
@@ -213,25 +228,74 @@ def evaluate(
     if not ks_list:
         return {}
     max_k = max(ks_list)
+
+    relevant_indices_map = _map_user_items_to_indices(user_item_map, feature_store)
+    seen_indices_map = _map_user_items_to_indices(seen_user_item_map, feature_store)
+
     topk_indices = []
     relevant_indices = []
     with torch.no_grad():
-        for uid in user_ids:
+        for uid, rel_indices in relevant_indices_map.items():
             user_feats = feature_store.get_user_features(torch.tensor([uid], dtype=torch.long))
             user_feats = to_device(user_feats, device)
             user_emb = model.user_tower(user_feats)
-            scores = model.score_all(user_emb, item_emb)
-            scores = scores.squeeze(0)
+            scores = model.score_all(user_emb, item_emb).squeeze(0)
+
+            seen_indices = seen_indices_map.get(uid)
+            if seen_indices is not None and seen_indices.numel() > 0:
+                scores[seen_indices.to(scores.device)] = -torch.inf
+
             topk = torch.topk(scores, max_k).indices
             topk_indices.append(topk.cpu())
-            rel_ids = torch.tensor(user_item_map[uid], dtype=torch.long)
-            rel_indices = feature_store.map_item_ids_to_indices(rel_ids)
             relevant_indices.append(rel_indices)
+
     if not topk_indices:
         return {}
     topk_tensor = torch.stack(topk_indices, dim=0)
-    metrics = aggregate_ranking_metrics(topk_tensor, relevant_indices, ks_list)
-    return metrics
+    return aggregate_retrieval_metrics(topk_tensor, relevant_indices, ks_list)
+
+
+def evaluate_ranking(
+    model,
+    interactions_path: str,
+    feature_store: FeatureStore,
+    device: torch.device,
+    chunksize: int,
+    batch_size: int,
+) -> Dict[str, float]:
+    dataset = InteractionIterableDataset(
+        interactions_path=interactions_path,
+        feature_store=feature_store,
+        chunksize=chunksize,
+        batch_size=batch_size,
+        negatives_per_pos=0,
+        include_labels=True,
+    )
+
+    model.eval()
+    logits_chunks: List[torch.Tensor] = []
+    label_chunks: List[torch.Tensor] = []
+
+    with torch.no_grad():
+        for batch in dataset:
+            batch = to_device(batch, device)
+            labels = batch.get("label")
+            if labels is None:
+                continue
+
+            user_features = {k[len("user_"):]: v for k, v in batch.items() if k.startswith("user_")}
+            item_features = {k[len("item_"):]: v for k, v in batch.items() if k.startswith("item_")}
+            logits = model.forward(user_features, item_features)
+
+            logits_chunks.append(logits.detach().cpu())
+            label_chunks.append(labels.detach().cpu())
+
+    if not logits_chunks:
+        return {}
+
+    logits_all = torch.cat(logits_chunks, dim=0)
+    labels_all = torch.cat(label_chunks, dim=0)
+    return aggregate_pointwise_metrics(logits_all, labels_all, model.loss_func)
 
 
 def train(args: argparse.Namespace, stage: str) -> str:
@@ -284,6 +348,7 @@ def train(args: argparse.Namespace, stage: str) -> str:
             user_cardinalities=user_cardinalities,
             item_cardinalities=item_cardinalities,
             tower_config=tower_cfg,
+            scorer_hidden_dims=args.scorer_hidden_dims,
             lr=args.lr,
             loss_func=getattr(args, "loss_func", None),
         )
@@ -307,8 +372,15 @@ def train(args: argparse.Namespace, stage: str) -> str:
 
     run = init_wandb(args, stage)
 
-    user_item_map = build_user_item_map(
+    val_user_item_map = build_user_item_map(
         paths.interactions_val_path,
+        feature_cfg,
+        user_encoders,
+        item_encoders,
+        chunksize=args.chunksize,
+    )
+    train_user_item_map = build_user_item_map(
+        paths.interactions_train_path,
         feature_cfg,
         user_encoders,
         item_encoders,
@@ -339,25 +411,73 @@ def train(args: argparse.Namespace, stage: str) -> str:
                     run.log({"train/loss": loss.item(), "train/epoch": epoch}, step=global_step)
 
             if args.eval_steps > 0 and global_step % args.eval_steps == 0:
-                metrics = evaluate(
-                    model,
-                    feature_store,
-                    user_item_map,
-                    device=device,
-                    ks=[5, 10, 20],
-                )
+                if stage == "retrieval":
+                    metrics = evaluate_retrieval(
+                        model,
+                        feature_store,
+                        val_user_item_map,
+                        train_user_item_map,
+                        device=device,
+                        ks=[5, 10, 20],
+                    )
+                else:
+                    metrics = {}
+                    metrics.update(
+                        evaluate_ranking(
+                            model,
+                            paths.interactions_val_path,
+                            feature_store,
+                            device=device,
+                            chunksize=args.chunksize,
+                            batch_size=args.batch_size,
+                        )
+                    )
+                    metrics.update(
+                        evaluate_retrieval(
+                            model,
+                            feature_store,
+                            val_user_item_map,
+                            train_user_item_map,
+                            device=device,
+                            ks=[5, 10, 20],
+                        )
+                    )
                 if run and metrics:
                     run.log({f"val/{k}": v for k, v in metrics.items()}, step=global_step)
                 model.train()
 
         avg_loss = total_loss / max(1, steps)
-        metrics = evaluate(
-            model,
-            feature_store,
-            user_item_map,
-            device=device,
-            ks=[5, 10, 20],
-        )
+        if stage == "retrieval":
+            metrics = evaluate_retrieval(
+                model,
+                feature_store,
+                val_user_item_map,
+                train_user_item_map,
+                device=device,
+                ks=[5, 10, 20],
+            )
+        else:
+            metrics = {}
+            metrics.update(
+                evaluate_ranking(
+                    model,
+                    paths.interactions_val_path,
+                    feature_store,
+                    device=device,
+                    chunksize=args.chunksize,
+                    batch_size=args.batch_size,
+                )
+            )
+            metrics.update(
+                evaluate_retrieval(
+                    model,
+                    feature_store,
+                    val_user_item_map,
+                    train_user_item_map,
+                    device=device,
+                    ks=[5, 10, 20],
+                )
+            )
         metrics_str = " ".join([f"{k}={v:.4f}" for k, v in metrics.items()])
         print(f"Epoch {epoch}: train_loss={avg_loss:.4f} {metrics_str}")
         if run:
