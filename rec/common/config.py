@@ -58,6 +58,19 @@ def build_base_parser(description: str) -> argparse.ArgumentParser:
     parser.add_argument("--wandb-project", default="rec")
     parser.add_argument("--wandb-entity", default=None)
     parser.add_argument("--wandb-run-name", default=None)
+    parser.add_argument("--wandb-artifact-name", default=None, help="W&B artifact name for logged model bundles")
+    parser.add_argument(
+        "--wandb-artifact-aliases",
+        nargs="*",
+        default=["latest"],
+        help="Aliases to attach to logged model artifacts (default: latest)",
+    )
+    parser.add_argument(
+        "--wandb-log-datasets",
+        action="store_true",
+        default=True,
+        help="Log dataset files (users/items/interactions) as W&B artifacts",
+    )
     return parser
 
 

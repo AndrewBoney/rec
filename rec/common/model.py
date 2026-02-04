@@ -74,19 +74,31 @@ class StackedTwoTowerEncoder(BaseEncoder):
         super().__init__(feature_cardinalities, config)
         input_dim = config.embedding_dim
         hidden_dims = config.hidden_dims or [128, 64]
-        self.mlp = MLP(input_dim, hidden_dims, config.dropout)
-        self.output_dim = hidden_dims[-1] if hidden_dims else input_dim
 
+        # define learnable weights for each feature embedding
         self.weights = nn.Parameter(torch.empty(config.embedding_dim, len(self.feature_names)))
         nn.init.xavier_uniform_(self.weights)
 
+        # define MLP for combined embeddings
+        self.mlp = MLP(input_dim, hidden_dims, config.dropout)
+        self.output_dim = hidden_dims[-1] if hidden_dims else input_dim
+
     def forward(self, features: Dict[str, torch.Tensor]) -> torch.Tensor:
+        # combine embeddings
         embs = torch.stack(
             [self.embeddings[name](features[name]) for name in self.feature_names],
             dim=-1,
         )
+
+        # apply softmax to weights and combine embeddings
         weights = F.softmax(self.weights, dim=1).unsqueeze(0)
         weighted_embs = embs * weights
         x = weighted_embs.sum(dim=-1)
+
+        # pass through MLP
         x = self.mlp(x)
+
+        # normalize output embeddings
+        x = F.normalize(x, dim=-1)
+
         return x

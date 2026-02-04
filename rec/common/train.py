@@ -1,10 +1,7 @@
 import argparse
 import importlib
-import json
 import os
 import torch
-
-from dataclasses import asdict
 from dotenv import load_dotenv
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 from tqdm import tqdm
@@ -12,6 +9,7 @@ from tqdm import tqdm
 from .data import DataPaths, FeatureStore, InteractionIterableDataset
 from .model import TowerConfig
 from .utils import CategoryEncoder, FeatureConfig, build_category_maps, load_encoders, read_parquet_batches, save_encoders, set_seed, to_device
+from .io import load_model_bundle, save_model_bundle
 from ..ranking.metrics import aggregate_pointwise_metrics
 from ..retrieval.metrics import aggregate_retrieval_metrics
 
@@ -116,6 +114,7 @@ def init_wandb(args, stage: str) -> Optional[Any]:
         project=getattr(args, "wandb_project", "rec"),
         entity=getattr(args, "wandb_entity", None),
         name=getattr(args, "wandb_run_name", None),
+        job_type=f"{stage}_train",
         config={k: v for k, v in vars(args).items() if k != "config"},
         tags=[stage],
     )
@@ -132,54 +131,22 @@ def save_inference_bundle(
     tower_cfg,
     extra_metadata: Optional[Dict[str, Any]] = None,
     checkpoint_name: str = "model.pt",
-) -> Dict[str, str]:
-    os.makedirs(artifact_dir, exist_ok=True)
-    user_enc_path = os.path.join(artifact_dir, "encoders.users.json")
-    item_enc_path = os.path.join(artifact_dir, "encoders.items.json")
-    save_encoders(user_enc_path, user_encoders)
-    save_encoders(item_enc_path, item_encoders)
-
-    ckpt_path = os.path.join(artifact_dir, checkpoint_name)
-    torch.save({"state_dict": model_state}, ckpt_path)
-
-    metadata = {
-        "stage": stage,
-        "feature_config": asdict(feature_cfg),
-        "tower_config": asdict(tower_cfg),
-        "checkpoint": checkpoint_name,
-        "encoders": {
-            "users": os.path.basename(user_enc_path),
-            "items": os.path.basename(item_enc_path),
-        },
-    }
-    if extra_metadata:
-        metadata.update(extra_metadata)
-
-    metadata_path = os.path.join(artifact_dir, "metadata.json")
-    with open(metadata_path, "w", encoding="utf-8") as f:
-        json.dump(metadata, f, indent=2)
-    return {
-        "artifact_dir": artifact_dir,
-        "metadata": metadata_path,
-        "checkpoint": ckpt_path,
-        "encoders_users": user_enc_path,
-        "encoders_items": item_enc_path,
-    }
+) -> Dict[str, Any]:
+    return save_model_bundle(
+        output_dir=artifact_dir,
+        stage=stage,
+        model_state=model_state,
+        feature_cfg=feature_cfg,
+        user_encoders=user_encoders,
+        item_encoders=item_encoders,
+        tower_cfg=tower_cfg,
+        extra_metadata=extra_metadata,
+        checkpoint_name=checkpoint_name,
+    )
 
 
 def load_inference_bundle(artifact_dir: str) -> Dict[str, Any]:
-    metadata_path = os.path.join(artifact_dir, "metadata.json")
-    with open(metadata_path, "r", encoding="utf-8") as f:
-        metadata = json.load(f)
-    user_encoders = load_encoders(os.path.join(artifact_dir, metadata["encoders"]["users"]))
-    item_encoders = load_encoders(os.path.join(artifact_dir, metadata["encoders"]["items"]))
-    checkpoint = os.path.join(artifact_dir, metadata["checkpoint"])
-    return {
-        "metadata": metadata,
-        "checkpoint": checkpoint,
-        "user_encoders": user_encoders,
-        "item_encoders": item_encoders,
-    }
+    return load_model_bundle(artifact_dir)
 
 
 def _load_retrieval_state(path: str) -> Dict[str, torch.Tensor]:
@@ -369,6 +336,16 @@ def train(args: argparse.Namespace, stage: str) -> str:
     model.to(device)
 
     run = init_wandb(args, stage)
+    if run and getattr(args, "wandb_log_datasets", False):
+        try:
+            wandb = importlib.import_module("wandb")
+            dataset_artifact = wandb.Artifact(f"{stage}_dataset", type="dataset")
+            for path in (args.users, args.items, args.interactions_train, args.interactions_val):
+                if path:
+                    dataset_artifact.add_file(path)
+            run.log_artifact(dataset_artifact, aliases=["latest"])
+        except Exception as exc:
+            print(f"Failed to log wandb dataset artifact: {exc}")
 
     val_user_item_map = build_user_item_map(
         paths.interactions_val_path,
@@ -491,6 +468,7 @@ def train(args: argparse.Namespace, stage: str) -> str:
         extra_metadata = {
             "user_cardinalities": user_cardinalities,
             "item_cardinalities": item_cardinalities,
+            "loss_func": args.loss_func,
         }
         if stage == "retrieval":
             extra_metadata["temperature"] = args.temperature
@@ -499,6 +477,7 @@ def train(args: argparse.Namespace, stage: str) -> str:
                 {
                     "negatives_per_pos": args.negatives_per_pos,
                     "init_from_retrieval": args.init_from_retrieval,
+                    "scorer_hidden_dims": args.scorer_hidden_dims,
                 }
             )
         bundle = save_inference_bundle(
@@ -514,9 +493,14 @@ def train(args: argparse.Namespace, stage: str) -> str:
         if run:
             try:
                 wandb = importlib.import_module("wandb")
-                artifact = wandb.Artifact(f"{stage}_bundle", type="model")
+                artifact_name = getattr(args, "wandb_artifact_name", None) or f"{stage}_bundle"
+                artifact_aliases = getattr(args, "wandb_artifact_aliases", None) or []
+                artifact = wandb.Artifact(artifact_name, type="model", metadata=bundle.get("metadata_dict"))
                 artifact.add_dir(bundle["artifact_dir"])
-                run.log_artifact(artifact)
+                if artifact_aliases:
+                    run.log_artifact(artifact, aliases=artifact_aliases)
+                else:
+                    run.log_artifact(artifact)
             except Exception as exc:
                 print(f"Failed to log wandb artifact: {exc}")
     if run:
