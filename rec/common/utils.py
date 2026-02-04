@@ -46,17 +46,21 @@ class CategoryEncoder:
     def __init__(self) -> None:
         self.mapping: Dict[str, int] = {}
         self.unknown_index: int = 0
+        self._is_fitted: bool = False
 
     def fit(self, values: Iterable[str]) -> None:
         for v in values:
             if v not in self.mapping:
                 self.mapping[v] = len(self.mapping) + 1
+        self._is_fitted = True
 
     def transform(self, values: Sequence[str]) -> np.ndarray:
+        assert self._is_fitted, "CategoryEncoder must be fitted before calling transform."
         return np.array([self.mapping.get(v, self.unknown_index) for v in values], dtype=np.int64)
 
     @property
     def num_embeddings(self) -> int:
+        assert self._is_fitted, "CategoryEncoder must be fitted before accessing num_embeddings."
         return len(self.mapping) + 1
 
 
