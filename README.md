@@ -16,5 +16,5 @@ __What this *is*__
 
 __What this *isn’t*__
 
-- An exhaustive survey or implementation of all recommendation approaches. The focus here is deliberately narrow, primarily on **dual-encoder architectures**.
-- A fully production-ready system. While the code aims to be well-written, tested, and reusable, the primary goal is **clarity and minimalism**. The target is to keep the project under ~5,000 lines of readable Python. In contrast, a real-world production system at scale might be an order of magnitude larger and span multiple languages and services.
+- An exhaustive survey or implementation of all recommendation approaches. The focus here is deliberately narrow, primarily on **dual-encoder ('two-tower') architectures**.
+- A fully production-ready system. While the code aims to be well-written, tested, and reusable, the primary goal is **clarity and minimalism**. The target is to keep the project under ~5,000 lines of readable Python. A real-world production system will be orders of magnitude larger and span multiple languages and services.

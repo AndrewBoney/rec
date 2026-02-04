@@ -1,0 +1,92 @@
+dataset:
+  name: movielens-1m
+  paths:
+    users: data/movielens/prepared/users.parquet
+    items: data/movielens/prepared/items.parquet
+    interactions_train: data/movielens/prepared/interactions_train.parquet
+    interactions_val: data/movielens/prepared/interactions_val.parquet
+
+shared:
+  seed: 42
+  encoder_cache: encoders.json
+
+retrieval:
+  columns:
+    user_id: user_id
+    item_id: item_id
+    user_cat_cols:
+      - gender
+      - age_group
+      - occupation
+    item_cat_cols:
+      - genre_primary
+      - year_bucket
+    interaction_user_col: user_id
+    interaction_item_col: item_id
+    interaction_time_col: timestamp
+    label_col: rating
+  model:
+    embedding_dim: 128
+    hidden_dims:
+      - 256
+      - 128
+      - 64
+    dropout: 0.2
+  training:
+    batch_size: 2048
+    num_workers: 0
+    chunksize: 200000
+    max_epochs: 10
+    lr: 0.0005
+    temperature: 0.05
+    loss_func: cross_entropy
+    eval_steps: 200
+    log_steps: 50
+    artifact_dir: artifacts/retrieval
+    use_wandb: true
+    wandb_project: rec
+    wandb_entity: null
+    wandb_run_name: retrieval-movielens-1m
+    checkpoint: retrieval.ckpt
+
+ranking:
+  columns:
+    user_id: user_id
+    item_id: item_id
+    user_cat_cols:
+      - gender
+      - age_group
+      - occupation
+      - zip_prefix      
+    item_cat_cols:
+      - genre_primary
+      - year_bucket
+    interaction_user_col: user_id
+    interaction_item_col: item_id
+    interaction_time_col: timestamp
+    label_col: rating
+  model:
+    embedding_dim: 256
+    hidden_dims:
+      - 256
+      - 128
+    scorer_hidden_dims:
+      - 128
+      - 64
+    dropout: 0.3
+  training:
+    batch_size: 4096
+    num_workers: 0
+    chunksize: 200000
+    max_epochs: 10
+    lr: 0.0005
+    negatives_per_pos: 0
+    loss_func: mse
+    eval_steps: 200
+    log_steps: 50
+    artifact_dir: artifacts/ranking
+    use_wandb: true
+    wandb_project: rec
+    wandb_entity: null
+    wandb_run_name: ranking-movielens-1m
+    checkpoint: ranking.ckpt
