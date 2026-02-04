@@ -12,6 +12,8 @@ from urllib.request import urlretrieve
 import numpy as np
 import pandas as pd
 
+from .utils import split_interactions_by_time
+
 MOVIELENS_1M_URL = "https://files.grouplens.org/datasets/movielens/ml-1m.zip"
 
 
@@ -72,7 +74,7 @@ def _load_ratings(path: str) -> pd.DataFrame:
 def generate_movielens_1m(
     output_dir: str,
     seed: int = 42,
-    val_frac: float = 0.2,
+    val_t: float = 0.2,
     url: str = MOVIELENS_1M_URL,
 ) -> None:
     os.makedirs(output_dir, exist_ok=True)
@@ -86,10 +88,7 @@ def generate_movielens_1m(
     items_df = _load_movies(os.path.join(extract_dir, "movies.dat"))
     interactions_df = _load_ratings(os.path.join(extract_dir, "ratings.dat"))
 
-    interactions_df = interactions_df.sample(frac=1.0, random_state=seed).reset_index(drop=True)
-    val_size = int(len(interactions_df) * val_frac)
-    val_df = interactions_df.iloc[:val_size].reset_index(drop=True)
-    train_df = interactions_df.iloc[val_size:].reset_index(drop=True)
+    train_df, val_df = split_interactions_by_time(interactions_df, val_t=val_t)
 
     users_path = os.path.join(prepared_dir, "users.parquet")
     items_path = os.path.join(prepared_dir, "items.parquet")
@@ -108,7 +107,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Download and prepare MovieLens 1M")
     parser.add_argument("--output-dir", default="data/movielens")
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--val-frac", type=float, default=0.2)
+    parser.add_argument("--val-t", type=float, default=0.2)
+    parser.add_argument("--val-frac", type=float, default=0.2, dest="val_t")
     parser.add_argument("--url", default=MOVIELENS_1M_URL)
     return parser.parse_args()
 
@@ -119,7 +119,7 @@ def main() -> None:
     generate_movielens_1m(
         output_dir=args.output_dir,
         seed=args.seed,
-        val_frac=args.val_frac,
+        val_t=args.val_t,
         url=args.url,
     )
 

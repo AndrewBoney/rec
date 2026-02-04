@@ -10,6 +10,8 @@ from typing import Dict, List, Tuple
 import numpy as np
 import pandas as pd
 
+from .utils import split_interactions_by_time
+
 
 def _make_ids(prefix: str, n: int) -> List[str]:
     width = max(6, len(str(n)))
@@ -154,7 +156,7 @@ def generate_dummy_data(
     n_interactions: int,
     seed: int,
     chunk_size: int = 200_000,
-    val_frac: float = 0.2,
+    val_t: float = 0.2,
 ) -> None:
     os.makedirs(output_dir, exist_ok=True)
     prepared_dir = os.path.join(output_dir, "prepared")
@@ -230,11 +232,8 @@ def generate_dummy_data(
 
     logger.info("Concatenating %d chunks", len(interaction_chunks))
     interactions = pd.concat(interaction_chunks, ignore_index=True)
-    interactions = interactions.sample(frac=1.0, random_state=seed).reset_index(drop=True)
 
-    val_size = int(len(interactions) * val_frac)
-    val_df = interactions.iloc[:val_size].reset_index(drop=True)
-    train_df = interactions.iloc[val_size:].reset_index(drop=True)
+    train_df, val_df = split_interactions_by_time(interactions, val_t=val_t)
 
     train_df.to_parquet(interactions_train_path, index=False)
     val_df.to_parquet(interactions_val_path, index=False)
@@ -249,7 +248,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--n-interactions", type=int, default=100000)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--chunk-size", type=int, default=200_000)
-    parser.add_argument("--val-frac", type=float, default=0.2)
+    parser.add_argument("--val-t", type=float, default=0.2)
+    parser.add_argument("--val-frac", type=float, default=0.2, dest="val_t")
     return parser.parse_args()
 
 
@@ -263,7 +263,7 @@ def main() -> None:
         n_interactions=args.n_interactions,
         seed=args.seed,
         chunk_size=args.chunk_size,
-        val_frac=args.val_frac,
+        val_t=args.val_t,
     )
 
 
