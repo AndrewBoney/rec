@@ -18,6 +18,7 @@ retrieval:
       - gender
       - age_group
       - occupation
+      - zip_prefix
     item_cat_cols:
       - genre_primary
       - year_bucket
@@ -26,14 +27,13 @@ retrieval:
     interaction_time_col: timestamp
     label_col: rating
   model:
-    embedding_dim: 128
+    embedding_dim: 256
     hidden_dims:
       - 256
       - 128
-      - 64
     dropout: 0.2
   training:
-    batch_size: 2048
+    batch_size: 16384
     num_workers: 0
     chunksize: 200000
     max_epochs: 10
@@ -75,7 +75,7 @@ ranking:
       - 64
     dropout: 0.3
   training:
-    batch_size: 4096
+    batch_size: 32768
     num_workers: 0
     chunksize: 200000
     max_epochs: 10

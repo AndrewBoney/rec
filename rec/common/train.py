@@ -170,7 +170,6 @@ def _map_user_items_to_indices(
     return mapped
 
 
-# TODO: add batching to prevent risk of OOM
 def evaluate_retrieval(
     model,
     feature_store: FeatureStore,
