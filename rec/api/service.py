@@ -1,3 +1,4 @@
+import logging
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
@@ -9,6 +10,9 @@ from ..ranking.model import TwoTowerRanking
 from ..retrieval.model import TwoTowerRetrieval
 from .assets import LatestInteraction, load_model_assets
 from .vector_store import ChromaVectorStore
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -56,9 +60,13 @@ class RecService:
         )
 
     def predict(self, user_id: str, top_k: Optional[int]) -> Dict[str, Any]:
+        logger.info(f"Prediction request for user_id={user_id}, top_k={top_k}")
+
         if user_id not in self.latest_interactions:
+            logger.warning(f"User not found in interactions: {user_id}")
             return {"error": f"User '{user_id}' not found in interactions_train"}
         if user_id not in self.user_id_encoder.mapping:
+            logger.warning(f"User not found in encoders: {user_id}")
             return {"error": f"User '{user_id}' not found in user encoders"}
 
         latest_interaction = self.latest_interactions[user_id]
@@ -113,6 +121,10 @@ class RecService:
                 }
             )
 
+        logger.info(
+            f"Prediction completed for user_id={user_id}, "
+            f"returned {len(recommendations)} recommendations"
+        )
         return {
             "user_id": user_id,
             "top_k": resolved_top_k,
