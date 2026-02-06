@@ -76,9 +76,9 @@ python rec/wandb_promote.py --artifact-name ranking_bundle --metric val/ndcg@10 
 
 If you already know a run id, pass --run-id to promote that run’s artifact directly.
 
-## Stage 4: Deploy an API (LitServe)
+## Stage 4: Deploy an API (FastAPI)
 
-Use [rec/deploy_api.py](rec/deploy_api.py) to serve a retrieval-then-ranking API. It loads retrieval + ranking bundles (local or W&B artifacts), builds a local ChromaDB index on startup (or uses an existing one), and serves recommendations for a user_id.
+Use [rec/deploy_api.py](rec/deploy_api.py) to serve a retrieval-then-ranking API with FastAPI. It loads retrieval + ranking bundles (local or W&B artifacts), builds a local ChromaDB index on startup (or uses an existing one), and serves recommendations for a user_id.
 
 Local bundles:
 python rec/deploy_api.py --config config/dummy/dummy_small.yaml --retrieval-bundle artifacts/retrieval --ranking-bundle artifacts/ranking
@@ -87,6 +87,6 @@ W&B bundles (artifact references like entity/project/retrieval_bundle:production
 python rec/deploy_api.py --config config/dummy/dummy_small.yaml --retrieval-wandb <artifact-ref> --ranking-wandb <artifact-ref>
 
 Notes:
-- Requires the litserve and chromadb Python packages.
+- Requires the fastapi, uvicorn, and chromadb Python packages.
 - Authentication tokens are read from .env via REC_API_TOKENS (comma-separated) or API_TOKENS. Use --require-auth to enforce auth even if no tokens are present.
 - Configure local vs remote hosting by setting --host and --port.

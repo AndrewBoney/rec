@@ -21,8 +21,19 @@ def promote_best_artifact(
     api = wandb.Api()
     project_path = f"{entity}/{project}" if entity else project
 
+    def _find_artifact_for_run(run):
+        for artifact in run.logged_artifacts():
+            if artifact.type != artifact_type:
+                continue
+            if artifact.name.split(":")[0] == artifact_name:
+                return artifact
+        return None
+
     if run_id:
         best_run = api.run(f"{project_path}/{run_id}")
+        target_artifact = _find_artifact_for_run(best_run)
+        if target_artifact is None:
+            raise RuntimeError(f"No artifact named '{artifact_name}' found on run '{run_id}'.")
     else:
         runs = api.runs(project_path)
         if not runs:
@@ -32,18 +43,29 @@ def promote_best_artifact(
             value = run.summary.get(metric)
             return float(value) if value is not None else float("-inf")
 
-        best_run = max(runs, key=_score) if maximize else min(runs, key=_score)
+        best_run = None
+        target_artifact = None
+        for run in runs:
+            artifact = _find_artifact_for_run(run)
+            if artifact is None:
+                continue
+            if best_run is None:
+                best_run = run
+                target_artifact = artifact
+                continue
+            if maximize:
+                if _score(run) > _score(best_run):
+                    best_run = run
+                    target_artifact = artifact
+            else:
+                if _score(run) < _score(best_run):
+                    best_run = run
+                    target_artifact = artifact
 
-    target_artifact = None
-    for artifact in best_run.logged_artifacts():
-        if artifact.type != artifact_type:
-            continue
-        if artifact.name.split(":")[0] == artifact_name:
-            target_artifact = artifact
-            break
-
-    if target_artifact is None:
-        raise RuntimeError(f"No artifact named '{artifact_name}' found on best run.")
+        if target_artifact is None:
+            raise RuntimeError(
+                f"No artifact named '{artifact_name}' found on any run in project '{project_path}'."
+            )
 
     if alias not in target_artifact.aliases:
         target_artifact.aliases.append(alias)
