@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+import itertools
 from typing import Dict
 
 import torch
 import torch.nn as nn
 
-from ..common.model import MLP, TowerConfig, StackedTwoTowerEncoder as TwoTowerEncoder
-
+from ..common.model import MLP, TowerConfig, BaseEncoder, StackedEncoder as TwoTowerEncoder
 
 class TwoTowerRanking(nn.Module):
     def __init__(
@@ -62,6 +62,57 @@ class TwoTowerRanking(nn.Module):
         logits = self.forward(user_features, item_features)
         return self.loss_fn(logits, labels)
 
+class DLRM(nn.Module):
+    def __init__(
+        self,
+        user_cardinalities: Dict[str, int],
+        item_cardinalities: Dict[str, int],
+        tower_config: TowerConfig,
+        lr: float = 1e-3,
+        loss_func: str | None = None,
+    ) -> None:
+        super().__init__() 
+        
+        cardinalities = {**user_cardinalities, **item_cardinalities}
+        
+        hidden_dims = tower_config.hidden_dims or []
+
+        self.encoder = BaseEncoder(cardinalities, tower_config)
+        self.mlp = MLP(
+            in_dim = tower_config.embedding_dim * len(cardinalities) + (len(cardinalities) * (len(cardinalities) - 1)) // 2, 
+            hidden_dims = hidden_dims + [1], 
+            dropout = tower_config.dropout, 
+            activate_last = False
+        )
+
+        self.lr = lr
+        self.loss_func = loss_func or "binary_cross_entropy"
+        if self.loss_func == "binary_cross_entropy":
+            self.loss_fn = nn.BCEWithLogitsLoss()
+        elif self.loss_func == "mse":
+            self.loss_fn = nn.MSELoss()
+        else:
+            raise ValueError(f"Unsupported ranking loss_func: {self.loss_func}") 
+    
+    def interact(self, features):
+        # features: List[Tensor[B, D]]
+        interactions = []
+        for x, y in itertools.combinations(features, 2):
+            interactions.append(torch.sum(x * y, dim=1, keepdim=True))
+        return torch.cat(interactions, dim=1)
+
+    def forward(self, features: Dict[str, torch.Tensor]) -> torch.Tensor:
+        embs = {name: self.encoder.embeddings[name](features[name]) for name in self.encoder.feature_names}
+        features_list = list(embs.values())
+        interactions = self.interact(features_list)
+        joint = torch.cat(features_list + [interactions], dim=1)
+        return self.mlp(joint).squeeze(-1)
+
+    def compute_loss(self, batch: Dict[str, torch.Tensor]) -> torch.Tensor:
+        features = {k: v for k, v in batch.items() if k != "label"}
+        labels = batch["label"]
+        logits = self.forward(features)
+        return self.loss_fn(logits, labels)
 
 def load_retrieval_towers(ranking_model: TwoTowerRanking, retrieval_state: Dict[str, torch.Tensor]) -> None:
     user_prefix = "user_tower."

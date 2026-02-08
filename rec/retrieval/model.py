@@ -5,7 +5,7 @@ from typing import Dict
 import torch
 import torch.nn as nn
 
-from ..common.model import TowerConfig, StackedTwoTowerEncoder as TwoTowerEncoder
+from ..common.model import TowerConfig, StackedEncoder as TwoTowerEncoder
 
 class TwoTowerRetrieval(nn.Module):
     def __init__(
@@ -14,14 +14,14 @@ class TwoTowerRetrieval(nn.Module):
         item_cardinalities: Dict[str, int],
         tower_config: TowerConfig,
         lr: float = 1e-3,
-        temperature: float = 0.05,
+        init_temperature: float = 0.05,
         loss_func: str | None = None,
     ) -> None:
         super().__init__()
         self.user_tower = TwoTowerEncoder(user_cardinalities, tower_config)
         self.item_tower = TwoTowerEncoder(item_cardinalities, tower_config)
         self.lr = lr
-        self.temperature = temperature
+        self.temperature = nn.Parameter(torch.tensor(init_temperature))
         self.loss_func = loss_func or "cross_entropy"
         if self.loss_func != "cross_entropy":
             raise ValueError(f"Unsupported retrieval loss_func: {self.loss_func}")
@@ -30,8 +30,7 @@ class TwoTowerRetrieval(nn.Module):
     def forward(self, user_features: Dict[str, torch.Tensor], item_features: Dict[str, torch.Tensor]) -> torch.Tensor:
         user_emb = self.user_tower(user_features)
         item_emb = self.item_tower(item_features)
-        scores = user_emb @ item_emb.T
-        return scores / self.temperature
+        return self.score_all(user_emb, item_emb)
 
     def score_all(
         self,

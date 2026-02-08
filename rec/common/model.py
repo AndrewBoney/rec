@@ -31,7 +31,7 @@ class MLP(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.net(x)
 
-# TODO: implement EmbeddingBag version for high-cardinality features
+# TODO: implement torchrec version for larger than RAM embedding tables
 class BaseEncoder(nn.Module):
     def __init__(
         self,
@@ -47,7 +47,7 @@ class BaseEncoder(nn.Module):
             }
         )
 
-class CatTwoTowerEncoder(BaseEncoder):
+class CatEncoder(BaseEncoder):
     def __init__(
         self,
         feature_cardinalities: Dict[str, int],
@@ -65,7 +65,7 @@ class CatTwoTowerEncoder(BaseEncoder):
         x = self.mlp(x)
         return x
 
-class StackedTwoTowerEncoder(BaseEncoder):
+class StackedEncoder(BaseEncoder):
     def __init__(
         self,
         feature_cardinalities: Dict[str, int],
