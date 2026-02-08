@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import itertools
-from typing import Dict
+from typing import Dict, List
 
 import torch
 import torch.nn as nn
@@ -68,18 +68,20 @@ class DLRM(nn.Module):
         user_cardinalities: Dict[str, int],
         item_cardinalities: Dict[str, int],
         tower_config: TowerConfig,
+        scorer_hidden_dims: list[int] | None = None,
         lr: float = 1e-3,
         loss_func: str | None = None,
     ) -> None:
         super().__init__() 
         
         cardinalities = {**user_cardinalities, **item_cardinalities}
-        
+        num_cardinalities = len(cardinalities)
+
         hidden_dims = tower_config.hidden_dims or []
 
         self.encoder = BaseEncoder(cardinalities, tower_config)
         self.mlp = MLP(
-            in_dim = tower_config.embedding_dim * len(cardinalities) + (len(cardinalities) * (len(cardinalities) - 1)) // 2, 
+            in_dim = tower_config.embedding_dim * num_cardinalities + (num_cardinalities * (num_cardinalities - 1)) // 2, 
             hidden_dims = hidden_dims + [1], 
             dropout = tower_config.dropout, 
             activate_last = False
@@ -94,7 +96,7 @@ class DLRM(nn.Module):
         else:
             raise ValueError(f"Unsupported ranking loss_func: {self.loss_func}") 
     
-    def interact(self, features):
+    def interact(self, features : List[torch.Tensor]) -> torch.Tensor:
         # features: List[Tensor[B, D]]
         interactions = []
         for x, y in itertools.combinations(features, 2):
@@ -102,8 +104,7 @@ class DLRM(nn.Module):
         return torch.cat(interactions, dim=1)
 
     def forward(self, features: Dict[str, torch.Tensor]) -> torch.Tensor:
-        embs = {name: self.encoder.embeddings[name](features[name]) for name in self.encoder.feature_names}
-        features_list = list(embs.values())
+        features_list = [self.encoder.embeddings[name](features[name]) for name in self.encoder.feature_names]
         interactions = self.interact(features_list)
         joint = torch.cat(features_list + [interactions], dim=1)
         return self.mlp(joint).squeeze(-1)
