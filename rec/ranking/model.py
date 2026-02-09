@@ -68,7 +68,7 @@ class DLRM(nn.Module):
         user_cardinalities: Dict[str, int],
         item_cardinalities: Dict[str, int],
         tower_config: TowerConfig,
-        scorer_hidden_dims: list[int] | None = None,
+        scorer_hidden_dims: list[int] | None = None, # TODO: kept this for now so args are consistent with TwoTowerRanking, but consider removing
         lr: float = 1e-3,
         loss_func: str | None = None,
     ) -> None:
@@ -109,6 +109,8 @@ class DLRM(nn.Module):
         joint = torch.cat(features_list + [interactions], dim=1)
         return self.mlp(joint).squeeze(-1)
 
+    # TODO: need an equivalent score_all method, but that doesn't work without TwoTower as currently signature expects user_emd and item_emb
+
     def compute_loss(self, batch: Dict[str, torch.Tensor]) -> torch.Tensor:
         features = {k: v for k, v in batch.items() if k != "label"}
         labels = batch["label"]
@@ -122,3 +124,4 @@ def load_retrieval_towers(ranking_model: TwoTowerRanking, retrieval_state: Dict[
     item_state = {k.replace(item_prefix, ""): v for k, v in retrieval_state.items() if k.startswith(item_prefix)}
     ranking_model.user_tower.load_state_dict(user_state, strict=False)
     ranking_model.item_tower.load_state_dict(item_state, strict=False)
+

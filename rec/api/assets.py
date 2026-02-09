@@ -3,7 +3,7 @@ from typing import Any, Dict, Optional
 
 import pandas as pd
 
-from ..common.data import FeatureStore, build_feature_store
+from ..common.data import DenseEncoder, FeatureStore, build_feature_store
 from ..common.io import load_model_from_bundle, load_model_from_wandb
 from ..common.utils import FeatureConfig, load_config, read_parquet_batches
 from .config import build_data_paths, build_feature_config
@@ -113,7 +113,12 @@ def load_model_assets(args, load_interactions: bool = True) -> ModelAssets:
     ):
         raise ValueError("Ranking and retrieval encoders differ; ensure consistent artifacts.")
 
-    feature_store = build_feature_store(data_paths, feature_cfg, user_encoders, item_encoders)
+    feature_store = build_feature_store(
+        data_paths,
+        feature_cfg,
+        user_encoders,
+        item_encoders,
+    )
 
     latest_interactions: Dict[str, LatestInteraction] = {}
     if load_interactions:

@@ -3,12 +3,22 @@ import importlib
 import os
 import torch
 from dotenv import load_dotenv
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 from tqdm import tqdm
 
-from .data import DataPaths, FeatureStore, InteractionIterableDataset
+from .data import (
+    CategoryEncoder,
+    DataPaths,
+    DenseEncoder,
+    FeatureConfig,
+    FeatureStore,
+    InteractionIterableDataset,
+    build_encoders,
+    to_device,
+)
+from .io import load_encoders, read_parquet_batches, save_encoders
 from .model import TowerConfig
-from .utils import CategoryEncoder, FeatureConfig, build_category_maps, load_encoders, read_parquet_batches, save_encoders, set_seed, to_device
+from .utils import set_seed
 from .io import load_model_bundle, save_model_bundle
 from ..ranking.metrics import aggregate_pointwise_metrics
 from ..retrieval.metrics import aggregate_retrieval_metrics
@@ -24,6 +34,8 @@ def build_feature_config(args) -> FeatureConfig:
         item_id_col=args.item_id_col,
         user_cat_cols=args.user_cat_cols,
         item_cat_cols=args.item_cat_cols,
+        user_dense_cols=getattr(args, "user_dense_cols", []),
+        item_dense_cols=getattr(args, "item_dense_cols", []),
         interaction_user_col=args.interaction_user_col,
         interaction_item_col=args.interaction_item_col,
         interaction_label_col=getattr(args, "interaction_label_col", None),
@@ -37,15 +49,14 @@ def build_cardinalities(encoders: Dict[str, CategoryEncoder], cols: Iterable[str
 def load_or_build_encoders(
     args,
     feature_cfg: FeatureConfig,
-    user_cols: List[str],
-    item_cols: List[str],
-) -> Tuple[Dict[str, CategoryEncoder], Dict[str, CategoryEncoder]]:
+) -> Tuple[Dict[str, Union[CategoryEncoder, DenseEncoder]],
+           Dict[str, Union[CategoryEncoder, DenseEncoder]]]:
     encoder_cache_path = args.encoder_cache
     users_cache_path = encoder_cache_path + ".users"
     items_cache_path = encoder_cache_path + ".items"
 
-    def _build_and_save() -> Tuple[Dict[str, CategoryEncoder], Dict[str, CategoryEncoder]]:
-        user_encs, item_encs = build_category_maps(
+    def _build_and_save():
+        user_encs, item_encs = build_encoders(
             args.users,
             args.items,
             args.interactions_train,
@@ -59,8 +70,13 @@ def load_or_build_encoders(
     if os.path.exists(users_cache_path) and os.path.exists(items_cache_path):
         user_encoders = load_encoders(users_cache_path)
         item_encoders = load_encoders(items_cache_path)
+
+        # Check all required columns are present
+        user_cols = [feature_cfg.user_id_col] + feature_cfg.user_cat_cols + feature_cfg.user_dense_cols
+        item_cols = [feature_cfg.item_id_col] + feature_cfg.item_cat_cols + feature_cfg.item_dense_cols
         missing_user = [col for col in user_cols if col not in user_encoders]
         missing_item = [col for col in item_cols if col not in item_encoders]
+
         if not missing_user and not missing_item:
             return user_encoders, item_encoders
 
@@ -126,8 +142,8 @@ def save_inference_bundle(
     stage: str,
     model_state: Dict[str, torch.Tensor],
     feature_cfg: FeatureConfig,
-    user_encoders: Dict[str, CategoryEncoder],
-    item_encoders: Dict[str, CategoryEncoder],
+    user_encoders: Dict[str, Union[CategoryEncoder, DenseEncoder]],
+    item_encoders: Dict[str, Union[CategoryEncoder, DenseEncoder]],
     tower_cfg,
     extra_metadata: Optional[Dict[str, Any]] = None,
     checkpoint_name: str = "model.pt",
@@ -271,7 +287,7 @@ def train(args: argparse.Namespace, stage: str) -> str:
     feature_cfg = build_feature_config(args)
     user_cols = [feature_cfg.user_id_col] + feature_cfg.user_cat_cols
     item_cols = [feature_cfg.item_id_col] + feature_cfg.item_cat_cols
-    user_encoders, item_encoders = load_or_build_encoders(args, feature_cfg, user_cols, item_cols)
+    user_encoders, item_encoders = load_or_build_encoders(args, feature_cfg)
     paths = build_paths(args)
 
     user_cardinalities = build_cardinalities(user_encoders, user_cols)

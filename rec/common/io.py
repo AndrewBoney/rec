@@ -2,16 +2,69 @@ from __future__ import annotations
 
 import importlib
 import json
+import os
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Iterable, Optional, Tuple, Union
 
+import pandas as pd
+import pyarrow.parquet as pq
 import torch
+import yaml
 
 from .model import TowerConfig
-from .utils import CategoryEncoder, FeatureConfig, load_encoders, save_encoders
 from ..ranking.model import TwoTowerRanking
 from ..retrieval.model import TwoTowerRetrieval
+
+
+def read_parquet_batches(path: str, batch_size: int) -> Iterable[pd.DataFrame]:
+    if not (path.endswith(".parquet") or path.endswith(".pq")):
+        raise ValueError(f"Only parquet inputs are supported: {path}")
+    parquet_file = pq.ParquetFile(path)
+    for batch in parquet_file.iter_batches(batch_size=batch_size):
+        yield batch.to_pandas()
+
+
+def read_table(path: str) -> pd.DataFrame:
+    if not (path.endswith(".parquet") or path.endswith(".pq")):
+        raise ValueError(f"Only parquet inputs are supported: {path}")
+    return pd.read_parquet(path)
+
+
+def load_config(path: str) -> dict:
+    with open(path, "r", encoding="utf-8") as f:
+        if path.endswith(".json"):
+            return json.load(f)
+        return yaml.safe_load(f)
+
+
+def save_encoders(path: str, encoders: Dict[str, Union["CategoryEncoder", "DenseEncoder"]]) -> None:
+    dir_path = os.path.dirname(path)
+    if dir_path:
+        os.makedirs(dir_path, exist_ok=True)
+    payload = {k: v.to_dict() for k, v in encoders.items()}
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f)
+
+
+def load_encoders(path: str) -> Dict[str, Union["CategoryEncoder", "DenseEncoder"]]:
+    from .data import CategoryEncoder, DenseEncoder
+
+    with open(path, "r", encoding="utf-8") as f:
+        payload = json.load(f)
+
+    encoders = {}
+    for k, data in payload.items():
+        if isinstance(data, dict) and data.get("type") == "category":
+            encoders[k] = CategoryEncoder.from_dict(data)
+        elif isinstance(data, dict) and data.get("type") == "dense":
+            encoders[k] = DenseEncoder.from_dict(data)
+        else:
+            # Backward compatibility: no type field means CategoryEncoder (old format)
+            enc = CategoryEncoder()
+            enc.mapping = {str(key): int(value) for key, value in data.items()}
+            encoders[k] = enc
+    return encoders
 
 
 def save_model_bundle(
@@ -19,14 +72,16 @@ def save_model_bundle(
     output_dir: str | Path,
     stage: str,
     model_state: Dict[str, torch.Tensor],
-    feature_cfg: FeatureConfig,
-    user_encoders: Dict[str, CategoryEncoder],
-    item_encoders: Dict[str, CategoryEncoder],
+    feature_cfg: "FeatureConfig",
+    user_encoders: Dict[str, Union["CategoryEncoder", "DenseEncoder"]],
+    item_encoders: Dict[str, Union["CategoryEncoder", "DenseEncoder"]],
     tower_cfg,
     extra_metadata: Optional[Dict[str, Any]] = None,
     checkpoint_name: str = "model.pt",
 ) -> Dict[str, Any]:
     """Persist a complete model bundle for later inference or artifact logging."""
+    from .data import CategoryEncoder, DenseEncoder, FeatureConfig
+
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
 
@@ -130,7 +185,12 @@ def load_model_from_bundle(
     model.load_state_dict(state_dict)
     model.eval()
 
-    return model, metadata, bundle["user_encoders"], bundle["item_encoders"]
+    return (
+        model,
+        metadata,
+        bundle["user_encoders"],
+        bundle["item_encoders"],
+    )
 
 
 def load_model_from_wandb(

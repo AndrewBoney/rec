@@ -8,9 +8,16 @@ from .config import (
     build_base_parser,
     load_yaml_config,
 )
-from .data import DataPaths, FeatureStore
+from .data import (
+    CategoryEncoder,
+    DataPaths,
+    DenseEncoder,
+    FeatureConfig,
+    FeatureStore,
+    build_encoders,
+)
+from .io import load_encoders, read_parquet_batches, read_table, save_encoders
 from .model import MLP, TowerConfig, StackedTwoTowerEncoder, CatTwoTowerEncoder
-from .utils import CategoryEncoder, FeatureConfig, build_category_maps, load_encoders, read_parquet_batches, read_table, save_encoders
 
 __all__ = [
     "DataPaths",
@@ -28,8 +35,9 @@ __all__ = [
     "apply_shared_config",
     "apply_stage_config",
     "CategoryEncoder",
+    "DenseEncoder",
     "FeatureConfig",
-    "build_category_maps",
+    "build_encoders",
     "load_encoders",
     "read_parquet_batches",
     "read_table",

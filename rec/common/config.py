@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 from typing import Any, Dict, Optional
 
-from .utils import load_config
+from .io import load_config
 
 
 _COLUMN_ALIAS_MAP = {
@@ -38,6 +38,8 @@ def build_base_parser(description: str) -> argparse.ArgumentParser:
     parser.add_argument("--item-id-col", default="article_id")
     parser.add_argument("--user-cat-cols", nargs="*", default=["FN", "Active", "club_member_status", "fashion_news_frequency", "age"])
     parser.add_argument("--item-cat-cols", nargs="*", default=["product_type_no", "graphical_appearance_no", "colour_group_code", "section_no", "garment_group_no"])
+    parser.add_argument("--user-dense-cols", nargs="*", default=[])
+    parser.add_argument("--item-dense-cols", nargs="*", default=[])
     parser.add_argument("--interaction-user-col", default="customer_id")
     parser.add_argument("--interaction-item-col", default="article_id")
     parser.add_argument("--interaction-label-col", default=None)
