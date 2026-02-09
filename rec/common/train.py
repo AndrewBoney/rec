@@ -42,8 +42,31 @@ def build_feature_config(args) -> FeatureConfig:
     )
 
 
-def build_cardinalities(encoders: Dict[str, CategoryEncoder], cols: Iterable[str]) -> Dict[str, int]:
-    return {col: encoders[col].num_embeddings for col in cols}
+def build_cardinalities(
+    encoders: Dict[str, Union[CategoryEncoder, DenseEncoder]],
+    cols: Iterable[str]
+) -> Dict[str, int]:
+    cardinalities = {}
+
+    for col in cols:
+        enc = encoders.get(col)
+        if isinstance(enc, CategoryEncoder):
+            cardinalities[col] = enc.num_embeddings
+
+    return cardinalities
+
+
+def build_dense_features(
+    encoders: Dict[str, Union[CategoryEncoder, DenseEncoder]],
+    cols: Iterable[str]
+) -> List[str]:
+    """Extract list of dense feature column names from encoders."""
+    dense_cols = []
+    for col in cols:
+        enc = encoders.get(col)
+        if isinstance(enc, DenseEncoder):
+            dense_cols.append(col)
+    return dense_cols
 
 
 def load_or_build_encoders(
@@ -219,7 +242,7 @@ def evaluate_retrieval(
             user_feats = feature_store.get_user_features(torch.tensor([uid], dtype=torch.long))
             user_feats = to_device(user_feats, device)
             user_emb = model.user_tower(user_feats)
-            scores = model.score_all(user_emb, item_emb).squeeze(0)
+            scores = (user_emb @ item_emb.T) / model.temperature
 
             seen_indices = seen_indices_map.get(uid)
             if seen_indices is not None and seen_indices.numel() > 0:
@@ -263,9 +286,12 @@ def evaluate_ranking(
             if labels is None:
                 continue
 
-            user_features = {k[len("user_"):]: v for k, v in batch.items() if k.startswith("user_")}
-            item_features = {k[len("item_"):]: v for k, v in batch.items() if k.startswith("item_")}
-            logits = model.forward(user_features, item_features)
+            if hasattr(model, "score_batch"):
+                logits = model.score_batch(batch)
+            else:
+                user_features = {k[len("user_"):]: v for k, v in batch.items() if k.startswith("user_")}
+                item_features = {k[len("item_"):]: v for k, v in batch.items() if k.startswith("item_")}
+                logits = model.forward(user_features, item_features)
 
             logits_chunks.append(logits.detach().cpu())
             label_chunks.append(labels.detach().cpu())
@@ -285,31 +311,40 @@ def train(args: argparse.Namespace, stage: str) -> str:
     set_seed(args.seed)
 
     feature_cfg = build_feature_config(args)
-    user_cols = [feature_cfg.user_id_col] + feature_cfg.user_cat_cols
-    item_cols = [feature_cfg.item_id_col] + feature_cfg.item_cat_cols
+    user_cols = [feature_cfg.user_id_col] + feature_cfg.user_cat_cols + feature_cfg.user_dense_cols
+    item_cols = [feature_cfg.item_id_col] + feature_cfg.item_cat_cols + feature_cfg.item_dense_cols
     user_encoders, item_encoders = load_or_build_encoders(args, feature_cfg)
     paths = build_paths(args)
 
     user_cardinalities = build_cardinalities(user_encoders, user_cols)
     item_cardinalities = build_cardinalities(item_encoders, item_cols)
 
+    # Build dense feature lists
+    user_dense_features = build_dense_features(user_encoders, user_cols)
+    item_dense_features = build_dense_features(item_encoders, item_cols)
+
     tower_cfg = TowerConfig(
         embedding_dim=args.embedding_dim,
         hidden_dims=args.hidden_dims,
         dropout=args.dropout,
+        dense_bottom_mlp_dims=getattr(args, "dense_bottom_mlp_dims", None),
     )
 
     if stage == "retrieval":
         from ..retrieval.data import build_retrieval_dataloader
-        from ..retrieval.model import TwoTowerRetrieval
+        from ..retrieval.model import get_model_class
 
-        model = TwoTowerRetrieval(
+        model_arch = getattr(args, "model_arch", "two_tower")
+        model_cls = get_model_class(model_arch)
+        model = model_cls(
             user_cardinalities=user_cardinalities,
             item_cardinalities=item_cardinalities,
             tower_config=tower_cfg,
             lr=args.lr,
             temperature=args.temperature,
             loss_func=getattr(args, "loss_func", None),
+            user_dense_features=user_dense_features,
+            item_dense_features=item_dense_features,
         )
         train_loader, feature_store = build_retrieval_dataloader(
             paths=paths,
@@ -322,17 +357,23 @@ def train(args: argparse.Namespace, stage: str) -> str:
         )
     else:
         from ..ranking.data import build_ranking_dataloader
-        from ..ranking.model import TwoTowerRanking, load_retrieval_towers
+        from ..ranking.model import get_model_class, load_retrieval_towers
 
-        model = TwoTowerRanking(
+        model_arch = getattr(args, "model_arch", "two_tower")
+        model_cls = get_model_class(model_arch)
+        model = model_cls(
             user_cardinalities=user_cardinalities,
             item_cardinalities=item_cardinalities,
             tower_config=tower_cfg,
             scorer_hidden_dims=args.scorer_hidden_dims,
             lr=args.lr,
             loss_func=getattr(args, "loss_func", None),
+            user_dense_features=user_dense_features,
+            item_dense_features=item_dense_features,
         )
         if args.init_from_retrieval:
+            if not (hasattr(model, "user_tower") and hasattr(model, "item_tower")):
+                raise ValueError("init_from_retrieval is only supported for two_tower ranking models")
             retrieval_state = _load_retrieval_state(args.init_from_retrieval)
             load_retrieval_towers(model, retrieval_state)
 
@@ -422,16 +463,17 @@ def train(args: argparse.Namespace, stage: str) -> str:
                             batch_size=args.batch_size,
                         )
                     )
-                    metrics.update(
-                        evaluate_retrieval(
-                            model,
-                            feature_store,
-                            val_user_item_map,
-                            train_user_item_map,
-                            device=device,
-                            ks=[5, 10, 20],
+                    if hasattr(model, "user_tower") and hasattr(model, "item_tower"):
+                        metrics.update(
+                            evaluate_retrieval(
+                                model,
+                                feature_store,
+                                val_user_item_map,
+                                train_user_item_map,
+                                device=device,
+                                ks=[5, 10, 20],
+                            )
                         )
-                    )
                 if run and metrics:
                     run.log({f"val/{k}": v for k, v in metrics.items()}, step=global_step)
                 model.train()
@@ -458,16 +500,17 @@ def train(args: argparse.Namespace, stage: str) -> str:
                     batch_size=args.batch_size,
                 )
             )
-            metrics.update(
-                evaluate_retrieval(
-                    model,
-                    feature_store,
-                    val_user_item_map,
-                    train_user_item_map,
-                    device=device,
-                    ks=[5, 10, 20],
+            if hasattr(model, "user_tower") and hasattr(model, "item_tower"):
+                metrics.update(
+                    evaluate_retrieval(
+                        model,
+                        feature_store,
+                        val_user_item_map,
+                        train_user_item_map,
+                        device=device,
+                        ks=[5, 10, 20],
+                    )
                 )
-            )
         metrics_str = " ".join([f"{k}={v:.4f}" for k, v in metrics.items()])
         print(f"Epoch {epoch}: train_loss={avg_loss:.4f} {metrics_str}")
         if run:
@@ -484,6 +527,7 @@ def train(args: argparse.Namespace, stage: str) -> str:
             "user_cardinalities": user_cardinalities,
             "item_cardinalities": item_cardinalities,
             "loss_func": args.loss_func,
+            "model_arch": getattr(args, "model_arch", "two_tower"),
         }
         if stage == "retrieval":
             extra_metadata["temperature"] = args.temperature

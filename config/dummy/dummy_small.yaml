@@ -27,6 +27,7 @@ retrieval:
     interaction_time_col: timestamp
     label_col: null
   model:
+    model_arch: two_tower
     embedding_dim: 64
     hidden_dims:
       - 128
@@ -64,6 +65,7 @@ ranking:
     interaction_item_col: item_id
     interaction_time_col: timestamp
   model:
+    model_arch: two_tower
     embedding_dim: 64
     hidden_dims:
       - 128

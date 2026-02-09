@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict
+from typing import Dict, List, Optional
 
 import torch
 import torch.nn as nn
@@ -16,10 +16,12 @@ class TwoTowerRetrieval(nn.Module):
         lr: float = 1e-3,
         init_temperature: float = 0.05,
         loss_func: str | None = None,
+        user_dense_features: Optional[List[str]] = None,
+        item_dense_features: Optional[List[str]] = None,
     ) -> None:
         super().__init__()
-        self.user_tower = TwoTowerEncoder(user_cardinalities, tower_config)
-        self.item_tower = TwoTowerEncoder(item_cardinalities, tower_config)
+        self.user_tower = TwoTowerEncoder(user_cardinalities, tower_config, dense_feature_names=user_dense_features)
+        self.item_tower = TwoTowerEncoder(item_cardinalities, tower_config, dense_feature_names=item_dense_features)
         self.lr = lr
         self.temperature = nn.Parameter(torch.tensor(init_temperature))
         self.loss_func = loss_func or "cross_entropy"
@@ -30,13 +32,6 @@ class TwoTowerRetrieval(nn.Module):
     def forward(self, user_features: Dict[str, torch.Tensor], item_features: Dict[str, torch.Tensor]) -> torch.Tensor:
         user_emb = self.user_tower(user_features)
         item_emb = self.item_tower(item_features)
-        return self.score_all(user_emb, item_emb)
-
-    def score_all(
-        self,
-        user_emb: torch.Tensor,
-        item_emb: torch.Tensor,
-    ) -> torch.Tensor:
         scores = user_emb @ item_emb.T
         return scores / self.temperature
 
@@ -48,3 +43,16 @@ class TwoTowerRetrieval(nn.Module):
         scores = self.forward(user_features, item_features) 
         labels = torch.arange(scores.size(0), device=scores.device)
         return self.loss_fn(scores, labels)
+
+
+RETRIEVAL_MODEL_REGISTRY = {
+    "two_tower": TwoTowerRetrieval,
+}
+
+
+def get_model_class(arch: str) -> type[nn.Module]:
+    key = (arch or "").lower()
+    if key in RETRIEVAL_MODEL_REGISTRY:
+        return RETRIEVAL_MODEL_REGISTRY[key]
+    available = ", ".join(sorted(RETRIEVAL_MODEL_REGISTRY))
+    raise ValueError(f"Unsupported retrieval model_arch: {arch}. Available: {available}")

@@ -37,10 +37,11 @@ def _load_users(path: str) -> pd.DataFrame:
     df = pd.read_csv(path, sep="::", names=cols, engine="python", encoding="latin-1")
     df["user_id"] = df["user_id"].astype(str)
     df["gender"] = df["gender"].astype(str)
+    df["age"] = df["age"].astype(float)
     df["age_group"] = df["age"].astype(str).apply(lambda x: f"age_{x}")
     df["occupation"] = df["occupation"].astype(str).apply(lambda x: f"occ_{x}")
     df["zip_prefix"] = df["zip"].astype(str).str.slice(0, 3).fillna("000")
-    return df[["user_id", "gender", "age_group", "occupation", "zip_prefix"]]
+    return df[["user_id", "age", "gender", "age_group", "occupation", "zip", "zip_prefix"]]
 
 
 def _extract_year(title: str) -> Tuple[str, str]:

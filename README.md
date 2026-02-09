@@ -49,6 +49,9 @@ Outputs:
 Run retrieval-only:
 python rec/retrieval/train.py --config config/dummy/dummy_small.yaml
 
+Override the retrieval architecture (default: two_tower):
+python rec/retrieval/train.py --config config/dummy/dummy_small.yaml --model-arch two_tower
+
 ## Stage 2: Training (ranking)
 
 The ranking model re-scores candidates from retrieval with a pointwise objective.
@@ -63,6 +66,9 @@ Outputs:
 
 Run ranking-only (assumes a retrieval checkpoint):
 python rec/ranking/train.py --config config/dummy/dummy_small.yaml --init-from-retrieval retrieval.ckpt
+
+Try an alternate ranking architecture:
+python rec/ranking/train.py --config config/dummy/dummy_small.yaml --model-arch dlrm
 
 ## Stage 3: Promote a model (W&B)
 

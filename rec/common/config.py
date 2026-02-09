@@ -53,6 +53,7 @@ def build_base_parser(description: str) -> argparse.ArgumentParser:
     parser.add_argument("--log-steps", type=int, default=50)
     parser.add_argument("--embedding-dim", type=int, default=64)
     parser.add_argument("--hidden-dims", nargs="*", type=int, default=[128, 64])
+    parser.add_argument("--dense-bottom-mlp-dims", nargs="*", type=int, default=None, help="Hidden dims for dense feature bottom MLP (e.g., 64 32)")
     parser.add_argument("--dropout", type=float, default=0.1)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--loss-func", default=None, help="Loss function override (stage-dependent defaults apply)")
@@ -77,6 +78,12 @@ def build_base_parser(description: str) -> argparse.ArgumentParser:
 
 
 def add_retrieval_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
+    parser.add_argument(
+        "--model-arch",
+        default="two_tower",
+        choices=["two_tower"],
+        help="Retrieval model architecture",
+    )
     parser.add_argument("--temperature", type=float, default=0.05)
     parser.add_argument("--save-checkpoint", default="retrieval.ckpt")
     parser.add_argument("--artifact-dir", default=None)
@@ -84,6 +91,12 @@ def add_retrieval_args(parser: argparse.ArgumentParser) -> argparse.ArgumentPars
 
 
 def add_ranking_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
+    parser.add_argument(
+        "--model-arch",
+        default="two_tower",
+        choices=["two_tower", "dlrm"],
+        help="Ranking model architecture",
+    )
     parser.add_argument("--negatives-per-pos", type=int, default=4)
     parser.add_argument("--init-from-retrieval", default=None)
     parser.add_argument(
