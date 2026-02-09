@@ -16,12 +16,14 @@ def temp_dir():
         yield Path(tmpdir)
 
 
-@pytest.fixture(params=["small", "medium"])
+@pytest.fixture(params=["small", "medium", "large", "xlarge"])
 def dataset_size(request):
     """Parameterized fixture for different dataset sizes."""
     sizes = {
-        "small": {"n_users": 100, "n_items": 50, "n_interactions": 500},
+        "small": {"n_users": 100, "n_items": 50, "n_interactions": 1000},
         "medium": {"n_users": 1000, "n_items": 500, "n_interactions": 10000},
+        "large": {"n_users": 10000, "n_items": 5000, "n_interactions": 100000},
+        "xlarge": {"n_users": 100000, "n_items": 50000, "n_interactions": 1000000},
     }
     return sizes[request.param]
 

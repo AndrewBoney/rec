@@ -77,7 +77,7 @@ def test_feature_store_build_performance(
 
 
 @pytest.mark.benchmark
-@pytest.mark.parametrize("batch_size", [32, 128])
+@pytest.mark.parametrize("batch_size", [32, 128, 1024])
 def test_batch_loading_performance(
     dummy_data, feature_store, dataset_size, batch_size, benchmark_logger, temp_dir
 ):
@@ -133,7 +133,7 @@ def test_batch_loading_performance(
 
 
 @pytest.mark.benchmark
-@pytest.mark.parametrize("batch_size", [32, 128])
+@pytest.mark.parametrize("batch_size", [32, 128, 1024])
 def test_model_forward_performance(
     cardinalities, feature_store, dataset_size, batch_size, device, benchmark_logger
 ):
