@@ -89,6 +89,10 @@ def test_batch_loading_performance(
     interactions.to_parquet(interactions_path)
 
     from rec.common.data import InteractionIterableDataset
+    import numpy as np
+
+    # Create item pool for negative sampling
+    item_id_pool = np.array(items["item_id"].tolist())
 
     dataset = InteractionIterableDataset(
         interactions_path=str(interactions_path),
@@ -96,6 +100,7 @@ def test_batch_loading_performance(
         chunksize=10000,
         batch_size=batch_size,
         negatives_per_pos=2,
+        item_id_pool=item_id_pool,
         include_labels=False,
     )
 
@@ -130,31 +135,22 @@ def test_batch_loading_performance(
 @pytest.mark.benchmark
 @pytest.mark.parametrize("batch_size", [32, 128])
 def test_model_forward_performance(
-    encoders, feature_store, dataset_size, batch_size, device, benchmark_logger
+    cardinalities, feature_store, dataset_size, batch_size, device, benchmark_logger
 ):
     """Benchmark model forward pass time."""
-    user_encoders, item_encoders = encoders
+    user_cardinalities, item_cardinalities = cardinalities
 
     # Build model
-    user_tower = TowerConfig(
-        categorical_features=feature_store.feature_cfg.user_cat_cols,
-        dense_features=feature_store.feature_cfg.user_dense_cols,
+    tower_config = TowerConfig(
         embedding_dim=32,
         hidden_dims=[64, 32],
-    )
-    item_tower = TowerConfig(
-        categorical_features=feature_store.feature_cfg.item_cat_cols,
-        dense_features=feature_store.feature_cfg.item_dense_cols,
-        embedding_dim=32,
-        hidden_dims=[64, 32],
+        dropout=0.1,
     )
 
     model = TwoTowerRetrieval(
-        user_tower=user_tower,
-        item_tower=item_tower,
-        user_encoders=user_encoders,
-        item_encoders=item_encoders,
-        output_dim=32,
+        user_cardinalities=user_cardinalities,
+        item_cardinalities=item_cardinalities,
+        tower_config=tower_config,
     ).to(device)
 
     model.eval()
@@ -172,8 +168,7 @@ def test_model_forward_performance(
     # Warmup
     with torch.no_grad():
         for _ in range(10):
-            _ = model.user_tower(user_features)
-            _ = model.item_tower(item_features)
+            _ = model(user_features, item_features)
 
     # Benchmark
     n_iterations = 100
@@ -181,8 +176,7 @@ def test_model_forward_performance(
 
     with torch.no_grad():
         for _ in range(n_iterations):
-            user_emb = model.user_tower(user_features)
-            item_emb = model.item_tower(item_features)
+            scores = model(user_features, item_features)
 
     elapsed = time.time() - start_time
     time_per_forward = elapsed / n_iterations
@@ -254,6 +248,10 @@ def test_end_to_end_workflow(
     interactions.to_parquet(interactions_path)
 
     from rec.common.data import InteractionIterableDataset
+    import numpy as np
+
+    # Create item pool for negative sampling
+    item_id_pool = np.array(items["item_id"].tolist())
 
     dataset = InteractionIterableDataset(
         interactions_path=str(interactions_path),
@@ -261,30 +259,35 @@ def test_end_to_end_workflow(
         chunksize=10000,
         batch_size=32,
         negatives_per_pos=2,
+        item_id_pool=item_id_pool,
         include_labels=True,
     )
     timings["dataset_creation"] = time.time() - start
 
     # 4. Build model
     start = time.time()
-    user_tower = TowerConfig(
-        categorical_features=feature_config.user_cat_cols,
-        dense_features=feature_config.user_dense_cols,
+
+    # Build cardinalities from encoders (only categorical)
+    user_cardinalities = {
+        name: enc.num_embeddings
+        for name, enc in user_encoders.items()
+        if isinstance(enc, CategoryEncoder)
+    }
+    item_cardinalities = {
+        name: enc.num_embeddings
+        for name, enc in item_encoders.items()
+        if isinstance(enc, CategoryEncoder)
+    }
+
+    tower_config = TowerConfig(
         embedding_dim=32,
         hidden_dims=[64],
-    )
-    item_tower = TowerConfig(
-        categorical_features=feature_config.item_cat_cols,
-        dense_features=feature_config.item_dense_cols,
-        embedding_dim=32,
-        hidden_dims=[64],
+        dropout=0.1,
     )
     model = TwoTowerRetrieval(
-        user_tower=user_tower,
-        item_tower=item_tower,
-        user_encoders=user_encoders,
-        item_encoders=item_encoders,
-        output_dim=32,
+        user_cardinalities=user_cardinalities,
+        item_cardinalities=item_cardinalities,
+        tower_config=tower_config,
     ).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
     timings["model_creation"] = time.time() - start
@@ -298,12 +301,9 @@ def test_end_to_end_workflow(
     for batch in dataset:
         optimizer.zero_grad()
 
-        user_features = {k: v.to(device) for k, v in batch["user_features"].items()}
-        item_features = {k: v.to(device) for k, v in batch["item_features"].items()}
-
-        user_emb = model.user_tower(user_features)
-        item_emb = model.item_tower(item_features)
-        loss = model.compute_loss(user_emb, item_emb)
+        # Batch already has user_<feature> and item_<feature> keys
+        batch = {k: v.to(device) for k, v in batch.items()}
+        loss = model.compute_loss(batch)
 
         loss.backward()
         optimizer.step()

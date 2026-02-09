@@ -140,6 +140,28 @@ def feature_store(dummy_data, feature_config, encoders):
     return FeatureStore(users, items, user_encoders, item_encoders, feature_config)
 
 
+@pytest.fixture
+def cardinalities(encoders):
+    """Build cardinality dicts for models (only categorical features)."""
+    from rec.common.data import CategoryEncoder
+
+    user_encoders, item_encoders = encoders
+
+    # Only include categorical encoders
+    user_cardinalities = {
+        name: enc.num_embeddings
+        for name, enc in user_encoders.items()
+        if isinstance(enc, CategoryEncoder)
+    }
+    item_cardinalities = {
+        name: enc.num_embeddings
+        for name, enc in item_encoders.items()
+        if isinstance(enc, CategoryEncoder)
+    }
+
+    return user_cardinalities, item_cardinalities
+
+
 class BenchmarkLogger:
     """Simple logger for benchmark results."""
 

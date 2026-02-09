@@ -17,15 +17,15 @@ from .data import (
     build_encoders,
 )
 from .io import load_encoders, read_parquet_batches, read_table, save_encoders
-from .model import MLP, TowerConfig, StackedTwoTowerEncoder, CatTwoTowerEncoder
+from .model import MLP, TowerConfig, StackedEncoder, CatEncoder
 
 __all__ = [
     "DataPaths",
     "FeatureStore",
     "MLP",
     "TowerConfig",
-    "StackedTwoTowerEncoder",
-    "CatTwoTowerEncoder",
+    "StackedEncoder",
+    "CatEncoder",
     "build_base_parser",
     "add_retrieval_args",
     "add_ranking_args",
