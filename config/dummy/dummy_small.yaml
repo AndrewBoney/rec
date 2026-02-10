@@ -36,7 +36,6 @@ retrieval:
   training:
     batch_size: 1024
     num_workers: 0
-    chunksize: 200000
     max_epochs: 3
     lr: 0.001
     temperature: 0.05
@@ -77,7 +76,6 @@ ranking:
   training:
     batch_size: 4096
     num_workers: 0
-    chunksize: 200000
     max_epochs: 3
     lr: 0.001
     negatives_per_pos: 4

@@ -47,7 +47,7 @@ def build_base_parser(description: str) -> argparse.ArgumentParser:
     parser.add_argument("--encoder-cache", default="encoders.json")
     parser.add_argument("--batch-size", type=int, default=1024)
     parser.add_argument("--num-workers", type=int, default=0)
-    parser.add_argument("--chunksize", type=int, default=200_000)
+    parser.add_argument("--chunksize", type=int, default=None)
     parser.add_argument("--max-epochs", type=int, default=3)
     parser.add_argument("--eval-steps", type=int, default=0)
     parser.add_argument("--log-steps", type=int, default=50)

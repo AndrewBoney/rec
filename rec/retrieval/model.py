@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -29,18 +29,22 @@ class TwoTowerRetrieval(nn.Module):
             raise ValueError(f"Unsupported retrieval loss_func: {self.loss_func}")
         self.loss_fn = nn.CrossEntropyLoss()
 
-    def forward(self, user_features: Dict[str, torch.Tensor], item_features: Dict[str, torch.Tensor]) -> torch.Tensor:
+    def _prep_features(self, batch: Dict[str, torch.Tensor]) -> Tuple[Dict[str, torch.Tensor], Dict[str, torch.Tensor]]:
+        user_prefix = "user_"
+        item_prefix = "item_"
+        user_features = {k[len(user_prefix):]: v for k, v in batch.items() if k.startswith(user_prefix)}
+        item_features = {k[len(item_prefix):]: v for k, v in batch.items() if k.startswith(item_prefix)}
+        return user_features, item_features
+
+    def forward(self, batch: Dict[str, torch.Tensor]) -> torch.Tensor:
+        user_features, item_features = self._prep_features(batch)
         user_emb = self.user_tower(user_features)
         item_emb = self.item_tower(item_features)
         scores = user_emb @ item_emb.T
         return scores / self.temperature
 
     def compute_loss(self, batch: Dict[str, torch.Tensor]) -> torch.Tensor:
-        user_prefix = "user_"
-        item_prefix = "item_"
-        user_features = {k[len(user_prefix):]: v for k, v in batch.items() if k.startswith(user_prefix)}
-        item_features = {k[len(item_prefix):]: v for k, v in batch.items() if k.startswith(item_prefix)}
-        scores = self.forward(user_features, item_features) 
+        scores = self.forward(batch) 
         labels = torch.arange(scores.size(0), device=scores.device)
         return self.loss_fn(scores, labels)
 

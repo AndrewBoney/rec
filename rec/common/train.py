@@ -311,6 +311,10 @@ def train(args: argparse.Namespace, stage: str) -> str:
 
     set_seed(args.seed)
 
+    # Set chunksize as a function of batch_size if not specified
+    if args.chunksize is None:
+        args.chunksize = args.batch_size * 20
+
     feature_cfg = build_feature_config(args)
     user_cols = [feature_cfg.user_id_col] + feature_cfg.user_cat_cols + feature_cfg.user_dense_cols
     item_cols = [feature_cfg.item_id_col] + feature_cfg.item_cat_cols + feature_cfg.item_dense_cols

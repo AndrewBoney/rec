@@ -162,13 +162,16 @@ def test_model_forward_performance(
     user_features = feature_store.get_user_features(user_ids)
     item_features = feature_store.get_item_features(item_ids)
 
-    user_features = {k: v.to(device) for k, v in user_features.items()}
-    item_features = {k: v.to(device) for k, v in item_features.items()}
+    batch = {
+        **{f"user_{k}": v for k, v in user_features.items()},
+        **{f"item_{k}": v for k, v in item_features.items()},
+    }
+
 
     # Warmup
     with torch.no_grad():
         for _ in range(10):
-            _ = model(user_features, item_features)
+            _ = model(batch)
 
     # Benchmark
     n_iterations = 100
@@ -176,7 +179,7 @@ def test_model_forward_performance(
 
     with torch.no_grad():
         for _ in range(n_iterations):
-            scores = model(user_features, item_features)
+            scores = model(batch)
 
     elapsed = time.time() - start_time
     time_per_forward = elapsed / n_iterations
