@@ -73,6 +73,8 @@ class DLRM(nn.Module):
         dense_features = (user_dense_features or []) + (item_dense_features or [])
         num_cardinalities = len(cardinalities)
 
+        self.num_dense_features = len(dense_features)
+
         hidden_dims = tower_config.hidden_dims or []
 
         self.encoder = BaseEncoder(cardinalities, tower_config, dense_feature_names=dense_features)
@@ -80,7 +82,7 @@ class DLRM(nn.Module):
         # Calculate input dimension for final MLP
         cat_dim = tower_config.embedding_dim * num_cardinalities
         interaction_dim = (num_cardinalities * (num_cardinalities - 1)) // 2
-        dense_dim = self.encoder.dense_bottom_mlp.output_dim
+        dense_dim = self.encoder.dense_bottom_mlp.output_dim if dense_features else 0
 
         self.mlp = MLP(
             in_dim=cat_dim + interaction_dim + dense_dim,
@@ -98,6 +100,9 @@ class DLRM(nn.Module):
         else:
             raise ValueError(f"Unsupported ranking loss_func: {self.loss_func}") 
     
+    def _remove_prefixes(self, batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        return {k.removeprefix("user_").removeprefix("item_"): v for k, v in batch.items() if "_" in k}
+
     def interact(self, features : List[torch.Tensor]) -> torch.Tensor:
         # features: List[Tensor[B, D]]
         interactions = []
@@ -106,19 +111,20 @@ class DLRM(nn.Module):
         return torch.cat(interactions, dim=1)
 
     def forward(self, batch: Dict[str, torch.Tensor]) -> torch.Tensor:
+        # Remove prefixes to get raw feature names for encoder
+        batch = self._remove_prefixes(batch)        
+
         # Process categorical features
         features_list = [self.encoder.embeddings[name](batch[name]) for name in self.encoder.feature_names]
         interactions = self.interact(features_list)
 
         # Process dense features
-        dense_features = {
-            name: batch[name].unsqueeze(-1) if batch[name].dim() == 1 else batch[name]
-            for name in self.encoder.dense_feature_names if name in batch
-        }
-        dense_emb = self.encoder.dense_bottom_mlp(dense_features)
-
-        # Combine all features
-        if dense_emb.shape[-1] > 0:
+        if self.num_dense_features > 0:
+            dense_features = {
+                name: batch[name].unsqueeze(-1) if batch[name].dim() == 1 else batch[name]
+                for name in self.encoder.dense_feature_names
+            } 
+            dense_emb = self.encoder.dense_bottom_mlp(dense_features)
             joint = torch.cat(features_list + [interactions, dense_emb], dim=1)
         else:
             joint = torch.cat(features_list + [interactions], dim=1)

@@ -243,6 +243,7 @@ def evaluate_retrieval(
             user_feats = to_device(user_feats, device)
             user_emb = model.user_tower(user_feats)
             scores = (user_emb @ item_emb.T) / model.temperature
+            scores = scores.squeeze(0)
 
             seen_indices = seen_indices_map.get(uid)
             if seen_indices is not None and seen_indices.numel() > 0:
@@ -341,7 +342,7 @@ def train(args: argparse.Namespace, stage: str) -> str:
             item_cardinalities=item_cardinalities,
             tower_config=tower_cfg,
             lr=args.lr,
-            temperature=args.temperature,
+            init_temperature=args.temperature,
             loss_func=getattr(args, "loss_func", None),
             user_dense_features=user_dense_features,
             item_dense_features=item_dense_features,

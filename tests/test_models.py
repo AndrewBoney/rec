@@ -29,18 +29,16 @@ def test_retrieval_model_forward(cardinalities, feature_store, device):
     item_features = feature_store.get_item_features(torch.tensor([0, 1, 2]))
 
     # Move to device
-    user_features = {k: v.to(device) for k, v in user_features.items()}
-    item_features = {k: v.to(device) for k, v in item_features.items()}
+    batch = {
+        **{f"user_{k}": v.to(device) for k, v in user_features.items()},
+        **{f"item_{k}": v.to(device) for k, v in item_features.items()},
+    }
 
     # Test forward pass
-    scores = model(user_features, item_features)
+    scores = model(batch)
     assert scores.shape == (3, 3)
 
     # Test loss computation with prefixed batch
-    batch = {
-        **{f"user_{k}": v for k, v in user_features.items()},
-        **{f"item_{k}": v for k, v in item_features.items()},
-    }
     loss = model.compute_loss(batch)
     assert loss.item() > 0
 
@@ -68,19 +66,18 @@ def test_ranking_two_tower_forward(cardinalities, feature_store, device):
     item_features = feature_store.get_item_features(torch.tensor([0, 1]))
 
     # Move to device
-    user_features = {k: v.to(device) for k, v in user_features.items()}
-    item_features = {k: v.to(device) for k, v in item_features.items()}
+    batch = {
+        **{f"user_{k}": v.to(device) for k, v in user_features.items()},
+        **{f"item_{k}": v.to(device) for k, v in item_features.items()},
+        "label": torch.tensor([1.0, 0.0]).to(device),
+    }
 
     # Test forward pass
-    scores = model(user_features, item_features)
+    scores = model(batch)
     assert scores.shape == (2,)
 
     # Test loss computation with prefixed batch and labels
-    batch = {
-        **{f"user_{k}": v for k, v in user_features.items()},
-        **{f"item_{k}": v for k, v in item_features.items()},
-        "label": torch.tensor([1.0, 0.0]).to(device),
-    }
+
     loss = model.compute_loss(batch)
     assert loss.item() > 0
 
@@ -106,12 +103,16 @@ def test_dlrm_forward(cardinalities, feature_store, device):
     user_features = feature_store.get_user_features(torch.tensor([0, 1]))
     item_features = feature_store.get_item_features(torch.tensor([0, 1]))
 
-    # Combine WITHOUT prefixes (DLRM doesn't use prefixes)
+    # Move to device
     batch = {
-        **{k: v.to(device) for k, v in user_features.items()},
-        **{k: v.to(device) for k, v in item_features.items()},
+        **{f"user_{k}": v.to(device) for k, v in user_features.items()},
+        **{f"item_{k}": v.to(device) for k, v in item_features.items()},
         "label": torch.tensor([1.0, 0.0]).to(device),
     }
+
+    # Test forward pass
+    scores = model(batch)
+    assert scores.shape == (2,)
 
     # Test loss computation
     loss = model.compute_loss(batch)

@@ -82,12 +82,13 @@ class BaseEncoder(nn.Module):
         )
 
         # Create dense bottom MLP
-        dense_mlp_dims = config.dense_bottom_mlp_dims or []
-        self.dense_bottom_mlp = DenseBottomMLP(
-            num_dense_features=len(self.dense_feature_names),
-            hidden_dims=dense_mlp_dims,
-            dropout=config.dropout,
-        )
+        if self.dense_feature_names:
+            dense_mlp_dims = config.dense_bottom_mlp_dims or []
+            self.dense_bottom_mlp = DenseBottomMLP(
+                num_dense_features=len(self.dense_feature_names),
+                hidden_dims=dense_mlp_dims,
+                dropout=config.dropout,
+            )
 
 class CatEncoder(BaseEncoder):
     def __init__(
@@ -110,11 +111,11 @@ class CatEncoder(BaseEncoder):
         cat_emb = torch.cat(emb_list, dim=-1)
 
         # Process dense features
-        dense_features = {
-            name: features[name].unsqueeze(-1) if features[name].dim() == 1 else features[name]
-            for name in self.dense_feature_names if name in features
-        }
-        if len(dense_features) > 0:
+        if self.dense_feature_names:
+            dense_features = {
+                name: features[name].unsqueeze(-1) if features[name].dim() == 1 else features[name]
+                for name in self.dense_feature_names
+            }
             dense_emb = self.dense_bottom_mlp(dense_features)
             x = torch.cat([cat_emb, dense_emb], dim=-1)
         else:
@@ -152,15 +153,15 @@ class StackedEncoder(BaseEncoder):
         if len(self.dense_feature_names) > 0:
             dense_features_dict = {
                 name: features[name].unsqueeze(-1) if features[name].dim() == 1 else features[name]
-                for name in self.dense_feature_names if name in features
+                for name in self.dense_feature_names
             }
             dense_emb = self.dense_bottom_mlp(dense_features_dict)
-            features_to_stack = cat_features + [dense_emb]
+            x = cat_features + [dense_emb]
         else:
-            features_to_stack = cat_features
+            x = cat_features
 
         embs = torch.stack(
-            features_to_stack,
+            x,
             dim=-1,
         )
 

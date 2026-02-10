@@ -3,8 +3,7 @@ from __future__ import annotations
 from typing import Dict, Tuple, Union
 from torch.utils.data import DataLoader
 
-from ..common.data import CategoryEncoder, DataPaths, DenseEncoder, FeatureStore, InteractionIterableDataset, build_feature_store
-from ..common.utils import FeatureConfig
+from ..common.data import CategoryEncoder, DataPaths, DenseEncoder, FeatureStore, InteractionIterableDataset, build_feature_store, FeatureConfig
 
 
 def build_retrieval_dataloader(

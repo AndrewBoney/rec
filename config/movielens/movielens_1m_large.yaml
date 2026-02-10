@@ -20,13 +20,16 @@ retrieval:
       - occupation
       - zip_prefix
     item_cat_cols:
-      - genre_primary
+      - genre_grouped
       - year_bucket
+    dense_user_cols:
+      - age
     interaction_user_col: user_id
     interaction_item_col: item_id
     interaction_time_col: timestamp
     label_col: rating
   model:
+    model_arch: two_tower
     embedding_dim: 256
     hidden_dims:
       - 256
@@ -36,7 +39,7 @@ retrieval:
     batch_size: 16384
     num_workers: 0
     chunksize: 200000
-    max_epochs: 10
+    max_epochs: 5
     lr: 0.0005
     temperature: 0.05
     loss_func: cross_entropy
@@ -59,13 +62,16 @@ ranking:
       - occupation
       - zip_prefix      
     item_cat_cols:
-      - genre_primary
+      - genre_grouped
       - year_bucket
+    dense_user_cols:
+      - age
     interaction_user_col: user_id
     interaction_item_col: item_id
     interaction_time_col: timestamp
     label_col: rating
   model:
+    model_arch: dlrm
     embedding_dim: 256
     hidden_dims:
       - 256

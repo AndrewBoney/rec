@@ -44,23 +44,26 @@ def _load_users(path: str) -> pd.DataFrame:
     return df[["user_id", "age", "gender", "age_group", "occupation", "zip", "zip_prefix"]]
 
 
-def _extract_year(title: str) -> Tuple[str, str]:
+def _extract_year(title: str) -> Tuple[int, str]:
     match = re.search(r"\((\d{4})\)", str(title))
-    if not match:
-        return "year_unknown", "year_unknown"
-    year = int(match.group(1))
-    decade = (year // 10) * 10
-    return str(year), f"year_{decade}s"
+    if match:
+        year = int(match.group(1))
+        decade = (year // 10) * 10
+        return year, f"year_{decade}s"
+    return None, "year_unknown"
 
 
 def _load_movies(path: str) -> pd.DataFrame:
     cols = ["item_id", "title", "genres"]
     df = pd.read_csv(path, sep="::", names=cols, engine="python", encoding="latin-1")
     df["item_id"] = df["item_id"].astype(str)
-    df["genre_primary"] = df["genres"].astype(str).apply(lambda x: x.split("|")[0])
+    vcs = df["genres"].value_counts() 
+    df["genre_grouped"] = df["genres"].apply(lambda x: x if x in vcs[vcs > 10].index else "other")
     years = df["title"].apply(_extract_year)
+    df["title_raw"] = df["title"].apply(lambda x: re.sub(r"\s\(\d{4}\)", "", str(x)))
+    df["year"] = years.apply(lambda x: x[0]).astype(str)
     df["year_bucket"] = years.apply(lambda x: x[1])
-    return df[["item_id", "genre_primary", "year_bucket"]]
+    return df[["item_id", "genres", "genre_grouped", "title", "title_raw", "year", "year_bucket"]]
 
 
 def _load_ratings(path: str) -> pd.DataFrame:
@@ -109,7 +112,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", default="data/movielens")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--val-t", type=float, default=0.2)
-    parser.add_argument("--val-frac", type=float, default=0.2, dest="val_t")
     parser.add_argument("--url", default=MOVIELENS_1M_URL)
     return parser.parse_args()
 
