@@ -116,7 +116,6 @@ class DLRM(nn.Module):
 
         # Process categorical features
         features_list = [self.encoder.embeddings[name](batch[name]) for name in self.encoder.feature_names]
-        interactions = self.interact(features_list)
 
         # Process dense features
         if self.num_dense_features > 0:
@@ -125,8 +124,11 @@ class DLRM(nn.Module):
                 for name in self.encoder.dense_feature_names
             } 
             dense_emb = self.encoder.dense_bottom_mlp(dense_features)
+            features_list = features_list + [dense_emb]
+            interactions = self.interact(features_list)
             joint = torch.cat(features_list + [interactions, dense_emb], dim=1)
         else:
+            interactions = self.interact(features_list)
             joint = torch.cat(features_list + [interactions], dim=1)
 
         return self.mlp(joint).squeeze(-1)

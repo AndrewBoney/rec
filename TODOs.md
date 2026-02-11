@@ -1,10 +1,16 @@
-- ~~refactor from pytorch lightning to plain torch.~~
-- ~~Add wandb logging. This should also enable storing and reusing the model, in a way where encoders (i.e. conversation of features into indexes) can also be reapplied to a new dataset for inference.~~ 
-- ~~Right now in the YAML and CLI setup it assumes that retrieval and ranking have the same columns. I want to have the ability to do use different columns for retrieval and ranking.~~  
-- ~~Implement alternative model architectures, e.g. combining embeddings with stacked + learned weightings.~~ 
+# Data
 - Add data prep script for h & m.
-- Improve metrics... I think retrieval is all wrong https://chatgpt.com/share/6983c112-5110-800b-a0de-caf7626a824d
-- Ability to use text and image encoders for cols given in YAML / CLI, with use of an embedding model from HuggingFace.
-- Sequential column processing. A few ways to do this. I want to read papers like GPTRec before getting into this. 
-- Add labels to implicit data... need to first investigate what these labels should be / indicate. 
-- adjust it so that imports follow my preferences (i.e. alias -> \n -> direct -> \n -> from (pip libs) -> \n -> from (local libs))
+
+# Modelling
+- Ability to use text and image encoders for cols given in config / argparser, with use of an embedding model from HuggingFace. This should contain an option to either fine-tune the embeddings or freeze. 
+- Use torchrec style embeddings for better handling at scale.
+- Add option for mixed precision training. Should be an option in config / argparser to be applied during training.
+- Add option for early stopping, defined in config / argparser. 
+- Optional selection of what optimizer to use in the config / argparser. 
+- LRFinder that will calculate optimal LR for a given model / dataset.
+- Scaling laws to define correct embedding dims.
+- Sequential column processing. A few ways to do this - either has sequences as rows (inefficient in terms of data storage but simpler) 
+
+# Deployment 
+- Test actual live API deployment on a server. Need to work out how that would work.
+- App for viewing predictions (probably gradio). 
