@@ -64,6 +64,7 @@ def aggregate_retrieval_metrics(
 
     totals = {f"recall@{k}": 0.0 for k in ks_list}
     totals.update({f"precision@{k}": 0.0 for k in ks_list})
+    totals.update({f"dcg@{k}": 0.0 for k in ks_list})
     totals.update({f"ndcg@{k}": 0.0 for k in ks_list})
     totals["mrr"] = 0.0
 
@@ -80,7 +81,11 @@ def aggregate_retrieval_metrics(
         for k in ks_list:
             totals[f"recall@{k}"] += recall_at_k(hits, num_rel, k)
             totals[f"precision@{k}"] += precision_at_k(hits, k)
-            totals[f"ndcg@{k}"] += ndcg_at_k(hits, num_rel, k)
+            dcg = dcg_at_k(hits, k)
+            ideal_dcg = idcg_at_k(num_rel, k)
+            ndcg = dcg / ideal_dcg if ideal_dcg > 0 else 0.0
+            totals[f"dcg@{k}"] += dcg
+            totals[f"ndcg@{k}"] += ndcg
 
     if num_users == 0:
         return {}

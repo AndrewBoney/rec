@@ -20,12 +20,120 @@ from .io import load_encoders, read_parquet_batches, save_encoders
 from .model import TowerConfig
 from .utils import set_seed
 from .io import load_model_bundle, save_model_bundle
+from .config import parse_optimizer_args
 from ..ranking.metrics import aggregate_pointwise_metrics
 from ..retrieval.metrics import aggregate_retrieval_metrics
 
 
 def get_device() -> torch.device:
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+def get_optimizer(optimizer_name: str, parameters, lr: float, **kwargs) -> torch.optim.Optimizer:
+    """Create an optimizer based on the specified class name from torch.optim.
+
+    Args:
+        optimizer_name: Name of the optimizer class (e.g., 'Adam', 'SGD')
+        parameters: Model parameters to optimize
+        lr: Learning rate
+        **kwargs: Additional optimizer-specific arguments (e.g., momentum, weight_decay)
+    """
+    try:
+        optimizer_class = getattr(torch.optim, optimizer_name)
+    except AttributeError:
+        raise ValueError(
+            f"Optimizer '{optimizer_name}' not found in torch.optim. "
+            f"Please use a valid optimizer class name (e.g., Adam, AdamW, SGD, RMSprop)."
+        )
+
+    return optimizer_class(parameters, lr=lr, **kwargs)
+
+
+def get_scheduler(scheduler_name: str, optimizer: torch.optim.Optimizer, **kwargs):
+    """Create a learning rate scheduler from torch.optim.lr_scheduler.
+
+    Args:
+        scheduler_name: Name of the scheduler class (e.g., 'StepLR', 'CosineAnnealingLR')
+        optimizer: The optimizer to schedule
+        **kwargs: Scheduler-specific arguments (e.g., step_size, gamma, T_max)
+
+    Returns:
+        Learning rate scheduler instance, or None if scheduler_name is None
+    """
+    if scheduler_name is None:
+        return None
+
+    try:
+        scheduler_class = getattr(torch.optim.lr_scheduler, scheduler_name)
+    except AttributeError:
+        raise ValueError(
+            f"Scheduler '{scheduler_name}' not found in torch.optim.lr_scheduler. "
+            f"Please use a valid scheduler class name (e.g., StepLR, CosineAnnealingLR, OneCycleLR)."
+        )
+
+    return scheduler_class(optimizer, **kwargs)
+
+
+def build_optimizer_from_args(args: argparse.Namespace, parameters) -> torch.optim.Optimizer:
+    """Build optimizer from args, merging config and CLI arguments.
+
+    Args:
+        args: Parsed arguments namespace
+        parameters: Model parameters to optimize
+
+    Returns:
+        Configured optimizer instance
+    """
+    optimizer_kwargs = {}
+
+    # First, add kwargs from config file (if present)
+    if hasattr(args, "optimizer_kwargs") and args.optimizer_kwargs:
+        optimizer_kwargs.update(args.optimizer_kwargs)
+
+    # Then, add/override with command line args (if present)
+    if hasattr(args, "optimizer_args") and args.optimizer_args:
+        cli_kwargs = parse_optimizer_args(args.optimizer_args)
+        optimizer_kwargs.update(cli_kwargs)
+
+    return get_optimizer(
+        getattr(args, "optimizer", "AdamW"),
+        parameters,
+        lr=args.lr,
+        **optimizer_kwargs,
+    )
+
+
+def build_scheduler_from_args(args: argparse.Namespace, optimizer: torch.optim.Optimizer) -> Tuple[Optional[Any], str]:
+    """Build learning rate scheduler from args, merging config and CLI arguments.
+
+    Args:
+        args: Parsed arguments namespace
+        optimizer: The optimizer to schedule
+
+    Returns:
+        Tuple of (scheduler instance or None, scheduler_interval)
+    """
+    scheduler = None
+    if hasattr(args, "scheduler") and args.scheduler:
+        scheduler_kwargs = {}
+
+        # First, add kwargs from config file (if present)
+        if hasattr(args, "scheduler_kwargs") and args.scheduler_kwargs:
+            scheduler_kwargs.update(args.scheduler_kwargs)
+
+        # Then, add/override with command line args (if present)
+        if hasattr(args, "scheduler_args") and args.scheduler_args:
+            cli_kwargs = parse_optimizer_args(args.scheduler_args)
+            scheduler_kwargs.update(cli_kwargs)
+
+        scheduler = get_scheduler(
+            args.scheduler,
+            optimizer,
+            **scheduler_kwargs,
+        )
+
+    scheduler_interval = getattr(args, "scheduler_interval", "epoch")
+    return scheduler, scheduler_interval
 
 
 def build_feature_config(args) -> FeatureConfig:
@@ -423,7 +531,9 @@ def train(args: argparse.Namespace, stage: str) -> str:
         chunksize=args.chunksize,
     )
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
+    optimizer = build_optimizer_from_args(args, model.parameters())
+    scheduler, scheduler_interval = build_scheduler_from_args(args, optimizer)
+
     global_step = 0
     for epoch in range(1, args.max_epochs + 1):
         model.train()
@@ -437,6 +547,11 @@ def train(args: argparse.Namespace, stage: str) -> str:
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+
+            # Step scheduler per training step if configured
+            if scheduler and scheduler_interval == "step":
+                scheduler.step()
+
             total_loss += loss.item()
             steps += 1
             global_step += 1
@@ -522,6 +637,14 @@ def train(args: argparse.Namespace, stage: str) -> str:
             run.log({"train/epoch_loss": avg_loss}, step=global_step)
             if metrics:
                 run.log({f"val/{k}": v for k, v in metrics.items()}, step=global_step)
+            # Log current learning rate
+            if scheduler:
+                current_lr = optimizer.param_groups[0]["lr"]
+                run.log({"train/lr": current_lr}, step=global_step)
+
+        # Step scheduler per epoch if configured
+        if scheduler and scheduler_interval == "epoch":
+            scheduler.step()
 
     if args.save_checkpoint:
         torch.save({"state_dict": model.state_dict()}, args.save_checkpoint)

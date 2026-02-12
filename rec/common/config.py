@@ -1,9 +1,43 @@
 from __future__ import annotations
 
 import argparse
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from .io import load_config
+
+
+def parse_optimizer_args(optimizer_args: List[str]) -> Dict[str, Any]:
+    """Parse optimizer arguments from key=value pairs.
+
+    Handles type conversion for common optimizer parameters.
+    """
+    parsed = {}
+    for arg in optimizer_args:
+        if "=" not in arg:
+            raise ValueError(f"Invalid optimizer argument format: '{arg}'. Expected key=value")
+
+        key, value = arg.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+
+        # Try to convert to appropriate type
+        try:
+            # Try int first
+            if "." not in value and "e" not in value.lower():
+                parsed[key] = int(value)
+            else:
+                # Try float
+                parsed[key] = float(value)
+        except ValueError:
+            # Keep as string for bool or other types
+            if value.lower() == "true":
+                parsed[key] = True
+            elif value.lower() == "false":
+                parsed[key] = False
+            else:
+                parsed[key] = value
+
+    return parsed
 
 
 _COLUMN_ALIAS_MAP = {
@@ -56,6 +90,34 @@ def build_base_parser(description: str) -> argparse.ArgumentParser:
     parser.add_argument("--dense-bottom-mlp-dims", nargs="*", type=int, default=None, help="Hidden dims for dense feature bottom MLP (e.g., 64 32)")
     parser.add_argument("--dropout", type=float, default=0.1)
     parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument(
+        "--optimizer",
+        default="AdamW",
+        help="Optimizer class name from torch.optim (e.g., Adam, AdamW, SGD, RMSprop)",
+    )
+    parser.add_argument(
+        "--optimizer-args",
+        nargs="*",
+        default=[],
+        help="Additional optimizer arguments as key=value pairs (e.g., momentum=0.9 weight_decay=1e-4)",
+    )
+    parser.add_argument(
+        "--scheduler",
+        default=None,
+        help="LR scheduler class name from torch.optim.lr_scheduler (e.g., StepLR, CosineAnnealingLR, OneCycleLR)",
+    )
+    parser.add_argument(
+        "--scheduler-args",
+        nargs="*",
+        default=[],
+        help="Additional scheduler arguments as key=value pairs (e.g., step_size=10 gamma=0.1)",
+    )
+    parser.add_argument(
+        "--scheduler-interval",
+        default="epoch",
+        choices=["epoch", "step"],
+        help="When to step the scheduler: per epoch or per training step (default: epoch)",
+    )
     parser.add_argument("--loss-func", default=None, help="Loss function override (stage-dependent defaults apply)")
     parser.add_argument("--use-wandb", action="store_true", help="Enable Weights & Biases logging")
     parser.add_argument("--wandb-project", default="rec")
@@ -155,7 +217,78 @@ def _flatten_config(cfg: Dict[str, Any], stage: Optional[str] = None) -> Dict[st
         elif "checkpoint" in training_cfg and "save_checkpoint" not in merged:
             merged["save_checkpoint"] = training_cfg["checkpoint"]
 
+    # Handle optimizer config - can be string or dict
+    _handle_optimizer_config(merged)
+
+    # Handle scheduler config - can be string or dict
+    _handle_scheduler_config(merged)
+
     return merged
+
+
+def _handle_optimizer_config(merged: Dict[str, Any]) -> None:
+    """Process optimizer config from dict format to args format.
+
+    Converts:
+        optimizer: {name: "SGD", momentum: 0.9, weight_decay: 1e-4}
+    To:
+        optimizer: "SGD"
+        optimizer_args: {"momentum": 0.9, "weight_decay": 1e-4}
+    """
+    if "optimizer" in merged and isinstance(merged["optimizer"], dict):
+        optimizer_dict = merged["optimizer"]
+        # Extract name
+        optimizer_name = optimizer_dict.get("name")
+        if not optimizer_name:
+            raise ValueError("optimizer config must have 'name' field")
+
+        # Extract other args (excluding 'name' and 'lr')
+        optimizer_kwargs = {
+            k: v for k, v in optimizer_dict.items()
+            if k not in ("name", "lr")
+        }
+
+        # Update merged config
+        merged["optimizer"] = optimizer_name
+        if optimizer_kwargs:
+            merged["optimizer_kwargs"] = optimizer_kwargs
+
+        # If lr is in optimizer dict, use it
+        if "lr" in optimizer_dict:
+            merged["lr"] = optimizer_dict["lr"]
+
+
+def _handle_scheduler_config(merged: Dict[str, Any]) -> None:
+    """Process scheduler config from dict format to args format.
+
+    Converts:
+        scheduler: {name: "StepLR", step_size: 10, gamma: 0.1, interval: "epoch"}
+    To:
+        scheduler: "StepLR"
+        scheduler_kwargs: {"step_size": 10, "gamma": 0.1}
+        scheduler_interval: "epoch"
+    """
+    if "scheduler" in merged and isinstance(merged["scheduler"], dict):
+        scheduler_dict = merged["scheduler"]
+        # Extract name
+        scheduler_name = scheduler_dict.get("name")
+        if not scheduler_name:
+            raise ValueError("scheduler config must have 'name' field")
+
+        # Extract interval if present
+        scheduler_interval = scheduler_dict.get("interval", "epoch")
+
+        # Extract other args (excluding 'name' and 'interval')
+        scheduler_kwargs = {
+            k: v for k, v in scheduler_dict.items()
+            if k not in ("name", "interval")
+        }
+
+        # Update merged config
+        merged["scheduler"] = scheduler_name
+        if scheduler_kwargs:
+            merged["scheduler_kwargs"] = scheduler_kwargs
+        merged["scheduler_interval"] = scheduler_interval
 
 
 def apply_config(args: argparse.Namespace, cfg: Dict[str, Any], stage: Optional[str] = None) -> argparse.Namespace:
