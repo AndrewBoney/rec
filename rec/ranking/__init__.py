@@ -1,3 +1,3 @@
-from .model import TwoTowerRanking
+from .model import DLRM, TwoTowerRanking
 
-__all__ = ["TwoTowerRanking"]
+__all__ = ["TwoTowerRanking", "DLRM"]

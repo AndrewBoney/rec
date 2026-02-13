@@ -13,8 +13,6 @@ import torch
 import yaml
 
 from .model import TowerConfig
-from ..ranking.model import TwoTowerRanking
-from ..retrieval.model import TwoTowerRetrieval
 
 
 def read_parquet_batches(path: str, batch_size: int) -> Iterable[pd.DataFrame]:
@@ -152,6 +150,9 @@ def load_model_from_bundle(
     bundle_dir: str | Path,
 ) -> Tuple[torch.nn.Module, Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
     """Load a model + encoders from a local bundle directory."""
+    from ..ranking.model import TwoTowerRanking
+    from ..retrieval.model import TwoTowerRetrieval
+
     bundle = load_model_bundle(bundle_dir)
     metadata = bundle["metadata"]
     tower_cfg = TowerConfig(**metadata["tower_config"])
@@ -167,7 +168,7 @@ def load_model_from_bundle(
             user_cardinalities=user_cardinalities,
             item_cardinalities=item_cardinalities,
             tower_config=tower_cfg,
-            temperature=metadata.get("temperature", 0.05),
+            init_temperature=metadata.get("temperature", 0.05),
             loss_func=metadata.get("loss_func"),
         )
     elif stage == "ranking":
