@@ -38,6 +38,7 @@ retrieval:
     num_workers: 0
     max_epochs: 3
     lr: 0.001
+    optimizer: Adam  # Simple string form
     temperature: 0.05
     eval_steps: 200
     log_steps: 50
@@ -78,6 +79,7 @@ ranking:
     num_workers: 0
     max_epochs: 3
     lr: 0.001
+    optimizer: AdamW
     negatives_per_pos: 4
     eval_steps: 200
     log_steps: 50

@@ -37,6 +37,7 @@ retrieval:
     num_workers: 0
     max_epochs: 3
     lr: 0.001
+    optimizer: AdamW  # Can also be a dict: {name: AdamW, weight_decay: 0.01}
     temperature: 0.05
     loss_func: cross_entropy
     eval_steps: 200
@@ -78,6 +79,7 @@ ranking:
     num_workers: 0
     max_epochs: 3
     lr: 0.001
+    optimizer: AdamW
     negatives_per_pos: 0
     loss_func: mse
     eval_steps: 200
