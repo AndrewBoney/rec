@@ -485,8 +485,6 @@ def train(args: argparse.Namespace, stage: str) -> str:
             item_dense_features=item_dense_features,
         )
         if args.init_from_retrieval:
-            if not (hasattr(model, "user_tower") and hasattr(model, "item_tower")):
-                raise ValueError("init_from_retrieval is only supported for two_tower ranking models")
             retrieval_state = _load_retrieval_state(args.init_from_retrieval)
             load_retrieval_towers(model, retrieval_state)
 

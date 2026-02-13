@@ -138,13 +138,120 @@ class DLRM(nn.Module):
         logits = self.forward(batch)
         return self.loss_fn(logits, labels)
 
-def load_retrieval_towers(ranking_model: TwoTowerRanking, retrieval_state: Dict[str, torch.Tensor]) -> None:
-    user_prefix = "user_tower."
-    item_prefix = "item_tower."
-    user_state = {k.replace(user_prefix, ""): v for k, v in retrieval_state.items() if k.startswith(user_prefix)}
-    item_state = {k.replace(item_prefix, ""): v for k, v in retrieval_state.items() if k.startswith(item_prefix)}
-    ranking_model.user_tower.load_state_dict(user_state, strict=False)
-    ranking_model.item_tower.load_state_dict(item_state, strict=False)
+def load_retrieval_towers(
+    ranking_model: nn.Module,
+    retrieval_state: Dict[str, torch.Tensor],
+    max_mappings_to_log: int = 200,
+) -> None:
+    """Load retrieval checkpoint weights into a ranking model via safe partial matching.
+
+    Matching strategy (in order):
+    1) Exact key match (same parameter name in both state dicts).
+    2) Prefix rewrite match (maps known retrieval prefixes to ranking prefixes).
+    3) Unique suffix match (same trailing path after the first module name).
+
+    A weight is copied only when both key mapping and tensor shape are compatible.
+    This keeps initialization robust across architectures while avoiding unsafe loads.
+
+    Emits a short log report showing which retrieval parameters were loaded and
+    where they mapped in the ranking model.
+    """
+    ranking_state = ranking_model.state_dict()
+
+    # Known cross-architecture rewrites.
+    # Example: retrieval `user_tower.embeddings.user_id.weight`
+    #      -> ranking   `encoder.embeddings.user_id.weight` (DLRM case)
+    rewrite_rules = (
+        ("user_tower.embeddings.", "encoder.embeddings."),
+        ("item_tower.embeddings.", "encoder.embeddings."),
+    )
+
+    # Build an index by suffix (everything after the first module name).
+    # This supports generic fallback matching when module roots differ.
+    suffix_index: Dict[str, List[str]] = {}
+    for target_key in ranking_state:
+        parts = target_key.split(".", 1)
+        if len(parts) == 2:
+            suffix_index.setdefault(parts[1], []).append(target_key)
+
+    mapped_state: Dict[str, torch.Tensor] = {}
+    loaded_mappings: List[Tuple[str, str]] = []
+    skipped_non_tensor = 0
+    skipped_no_match = 0
+    skipped_shape_mismatch = 0
+    skipped_ambiguous = 0
+
+    for source_key, source_value in retrieval_state.items():
+        if not isinstance(source_value, torch.Tensor):
+            skipped_non_tensor += 1
+            continue
+
+        # Try exact key first, then any rewrite-derived candidates.
+        candidate_keys = [source_key]
+        for source_prefix, target_prefix in rewrite_rules:
+            if source_key.startswith(source_prefix):
+                candidate_keys.append(target_prefix + source_key[len(source_prefix):])
+
+        # Use the first candidate with an identical target tensor shape.
+        matched_key: Optional[str] = None
+        had_shape_mismatch = False
+        for candidate_key in candidate_keys:
+            target_value = ranking_state.get(candidate_key)
+            if target_value is None:
+                continue
+            if target_value.shape != source_value.shape:
+                had_shape_mismatch = True
+                continue
+            matched_key = candidate_key
+            break
+
+        if matched_key is None:
+            # Fallback: match by unique suffix + shape.
+            # If multiple targets share the same suffix, skip to avoid ambiguity.
+            source_parts = source_key.split(".", 1)
+            if len(source_parts) == 2:
+                suffix = source_parts[1]
+                suffix_matches = [
+                    key
+                    for key in suffix_index.get(suffix, [])
+                    if ranking_state[key].shape == source_value.shape
+                ]
+                if len(suffix_matches) == 1:
+                    matched_key = suffix_matches[0]
+                elif len(suffix_matches) > 1:
+                    skipped_ambiguous += 1
+
+        # Keep the first successful assignment for each target parameter.
+        # This avoids one target being overwritten by multiple source keys.
+        if matched_key is not None and matched_key not in mapped_state:
+            mapped_state[matched_key] = source_value
+            loaded_mappings.append((source_key, matched_key))
+        elif matched_key is None:
+            if had_shape_mismatch:
+                skipped_shape_mismatch += 1
+            else:
+                skipped_no_match += 1
+
+    # `strict=False` allows partial initialization (matched subset only).
+    ranking_model.load_state_dict(mapped_state, strict=False)
+
+    print("[init_from_retrieval] Retrieval -> ranking parameter mapping")
+    print(
+        "[init_from_retrieval] "
+        f"loaded={len(loaded_mappings)} "
+        f"skipped_no_match={skipped_no_match} "
+        f"skipped_shape_mismatch={skipped_shape_mismatch} "
+        f"skipped_ambiguous={skipped_ambiguous} "
+        f"skipped_non_tensor={skipped_non_tensor}"
+    )
+
+    if loaded_mappings:
+        to_show = loaded_mappings[:max_mappings_to_log]
+        for source_key, target_key in to_show:
+            print(f"[init_from_retrieval]   {source_key} -> {target_key}")
+        if len(loaded_mappings) > max_mappings_to_log:
+            remaining = len(loaded_mappings) - max_mappings_to_log
+            print(f"[init_from_retrieval]   ... {remaining} more mappings not shown")
 
 
 RANKING_MODEL_REGISTRY = {
