@@ -8,6 +8,8 @@ import torch
 def _as_list(ks: Iterable[int]) -> List[int]:
     return sorted({int(k) for k in ks if int(k) > 0})
 
+def hit_at_k(hits: torch.Tensor, k: int) -> float:
+    return float(hits[:k].any().item())
 
 def recall_at_k(hits: torch.Tensor, num_relevant: int, k: int) -> float:
     if num_relevant == 0:
@@ -64,6 +66,7 @@ def aggregate_retrieval_metrics(
 
     totals = {f"recall@{k}": 0.0 for k in ks_list}
     totals.update({f"precision@{k}": 0.0 for k in ks_list})
+    totals.update({f"hit@{k}": 0.0 for k in ks_list})
     totals.update({f"dcg@{k}": 0.0 for k in ks_list})
     totals.update({f"ndcg@{k}": 0.0 for k in ks_list})
     totals["mrr"] = 0.0
@@ -81,6 +84,7 @@ def aggregate_retrieval_metrics(
         for k in ks_list:
             totals[f"recall@{k}"] += recall_at_k(hits, num_rel, k)
             totals[f"precision@{k}"] += precision_at_k(hits, k)
+            totals[f"hit@{k}"] += hit_at_k(hits, k)
             dcg = dcg_at_k(hits, k)
             ideal_dcg = idcg_at_k(num_rel, k)
             ndcg = dcg / ideal_dcg if ideal_dcg > 0 else 0.0
