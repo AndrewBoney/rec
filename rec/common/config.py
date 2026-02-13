@@ -118,6 +118,11 @@ def build_base_parser(description: str) -> argparse.ArgumentParser:
         choices=["epoch", "step"],
         help="When to step the scheduler: per epoch or per training step (default: epoch)",
     )
+    parser.add_argument(
+        "--mixed-precision",
+        action="store_true",
+        help="Enable mixed precision training (FP16) using torch.cuda.amp",
+    )
     parser.add_argument("--loss-func", default=None, help="Loss function override (stage-dependent defaults apply)")
     parser.add_argument("--use-wandb", action="store_true", help="Enable Weights & Biases logging")
     parser.add_argument("--wandb-project", default="rec")

@@ -204,6 +204,7 @@ class FeatureStore:
         # Build index
         user_id_tensor = self.user_features[feature_cfg.user_id_col][1:]
         item_id_tensor = self.item_features[feature_cfg.item_id_col][1:]
+        self.user_id_tensor = user_id_tensor
         self.item_id_tensor = item_id_tensor
         self.user_index: Dict[int, int] = {
             int(uid): idx + 1 for idx, uid in enumerate(user_id_tensor.tolist())
@@ -224,6 +225,12 @@ class FeatureStore:
 
     def get_all_item_features(self) -> Dict[str, torch.Tensor]:
         return {k: v[1:] for k, v in self.item_features.items()}
+
+    def get_all_user_features(self) -> Dict[str, torch.Tensor]:
+        return {k: v[1:] for k, v in self.user_features.items()}
+
+    def get_all_user_ids(self) -> torch.Tensor:
+        return self.user_id_tensor
 
     def get_all_item_ids(self) -> torch.Tensor:
         return self.item_id_tensor

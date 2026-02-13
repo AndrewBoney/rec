@@ -326,45 +326,42 @@ def evaluate_retrieval(
     ks: Iterable[int],
 ) -> Dict[str, float]:
     model.eval()
-    item_features = feature_store.get_all_item_features()
-    item_features = to_device(item_features, device)
-    with torch.no_grad():
-        item_emb = model.item_tower(item_features)
+    if not hasattr(model, "get_topk_scores"):
+        raise ValueError("Model must implement get_topk_scores(feature_store, k, seen_user_item_map)")
 
     ks_list = sorted({int(k) for k in ks if int(k) > 0})
     if not ks_list:
         return {}
-    num_items = item_emb.size(0)
+    num_items = int(feature_store.get_all_item_ids().numel())
     ks_list = [k for k in ks_list if k <= num_items]
     if not ks_list:
         return {}
     max_k = max(ks_list)
 
     relevant_indices_map = _map_user_items_to_indices(user_item_map, feature_store)
-    seen_indices_map = _map_user_items_to_indices(seen_user_item_map, feature_store)
 
-    topk_indices = []
-    relevant_indices = []
-    with torch.no_grad():
-        for uid, rel_indices in relevant_indices_map.items():
-            user_feats = feature_store.get_user_features(torch.tensor([uid], dtype=torch.long))
-            user_feats = to_device(user_feats, device)
-            user_emb = model.user_tower(user_feats)
-            scores = (user_emb @ item_emb.T) / model.temperature
-            scores = scores.squeeze(0)
+    all_user_ids = feature_store.get_all_user_ids().tolist()
+    uid_to_row = {int(uid): idx for idx, uid in enumerate(all_user_ids)}
 
-            seen_indices = seen_indices_map.get(uid)
-            if seen_indices is not None and seen_indices.numel() > 0:
-                scores[seen_indices.to(scores.device)] = -torch.inf
+    topk_matrix = model.get_topk_scores(
+        feature_store=feature_store,
+        k=max_k,
+        seen_user_item_map=seen_user_item_map,
+    )
 
-            topk = torch.topk(scores, max_k).indices
-            topk_indices.append(topk.cpu())
-            relevant_indices.append(rel_indices)
+    selected_topk: List[torch.Tensor] = []
+    selected_relevant: List[torch.Tensor] = []
+    for uid, rel_indices in relevant_indices_map.items():
+        row_idx = uid_to_row.get(int(uid))
+        if row_idx is None:
+            continue
+        selected_topk.append(topk_matrix[row_idx])
+        selected_relevant.append(rel_indices)
 
-    if not topk_indices:
+    if not selected_topk:
         return {}
-    topk_tensor = torch.stack(topk_indices, dim=0)
-    return aggregate_retrieval_metrics(topk_tensor, relevant_indices, ks_list)
+    topk_tensor = torch.stack(selected_topk, dim=0)
+    return aggregate_retrieval_metrics(topk_tensor, selected_relevant, ks_list)
 
 
 def evaluate_ranking(
@@ -395,12 +392,7 @@ def evaluate_ranking(
             if labels is None:
                 continue
 
-            if hasattr(model, "score_batch"):
-                logits = model.score_batch(batch)
-            else:
-                user_features = {k[len("user_"):]: v for k, v in batch.items() if k.startswith("user_")}
-                item_features = {k[len("item_"):]: v for k, v in batch.items() if k.startswith("item_")}
-                logits = model.forward(user_features, item_features)
+            logits = model.forward(batch)
 
             logits_chunks.append(logits.detach().cpu())
             label_chunks.append(labels.detach().cpu())
@@ -411,6 +403,10 @@ def evaluate_ranking(
     logits_all = torch.cat(logits_chunks, dim=0)
     labels_all = torch.cat(label_chunks, dim=0)
     return aggregate_pointwise_metrics(logits_all, labels_all, model.loss_func)
+
+
+def _supports_retrieval_eval(model) -> bool:
+    return hasattr(model, "get_topk_scores")
 
 
 def train(args: argparse.Namespace, stage: str) -> str:
@@ -532,6 +528,12 @@ def train(args: argparse.Namespace, stage: str) -> str:
     optimizer = build_optimizer_from_args(args, model.parameters())
     scheduler, scheduler_interval = build_scheduler_from_args(args, optimizer)
 
+    # Setup mixed precision training
+    use_amp = getattr(args, "mixed_precision", False) and device.type == "cuda"
+    scaler = torch.amp.GradScaler(device=device) if use_amp else None
+    if use_amp:
+        print("Mixed precision training enabled (FP16)")
+
     global_step = 0
     for epoch in range(1, args.max_epochs + 1):
         model.train()
@@ -541,10 +543,23 @@ def train(args: argparse.Namespace, stage: str) -> str:
         progress = tqdm(train_loader, desc=f"Epoch {epoch}", total=total_batches)
         for batch in progress:
             batch = to_device(batch, device)
-            loss = model.compute_loss(batch)
+
+            # Forward pass with optional mixed precision
+            if use_amp:
+                with torch.amp.autocast(device_type=device.type):
+                    loss = model.compute_loss(batch)
+            else:
+                loss = model.compute_loss(batch)
+
+            # Backward pass with gradient scaling if using mixed precision
             optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+            if use_amp:
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                loss.backward()
+                optimizer.step()
 
             # Step scheduler per training step if configured
             if scheduler and scheduler_interval == "step":
@@ -581,7 +596,7 @@ def train(args: argparse.Namespace, stage: str) -> str:
                             batch_size=args.batch_size,
                         )
                     )
-                    if hasattr(model, "user_tower") and hasattr(model, "item_tower"):
+                    if _supports_retrieval_eval(model):
                         metrics.update(
                             evaluate_retrieval(
                                 model,
@@ -618,7 +633,7 @@ def train(args: argparse.Namespace, stage: str) -> str:
                     batch_size=args.batch_size,
                 )
             )
-            if hasattr(model, "user_tower") and hasattr(model, "item_tower"):
+            if _supports_retrieval_eval(model):
                 metrics.update(
                     evaluate_retrieval(
                         model,
@@ -654,6 +669,7 @@ def train(args: argparse.Namespace, stage: str) -> str:
             "item_cardinalities": item_cardinalities,
             "loss_func": args.loss_func,
             "model_arch": getattr(args, "model_arch", "two_tower"),
+            "mixed_precision": use_amp,
         }
         if stage == "retrieval":
             extra_metadata["temperature"] = args.temperature

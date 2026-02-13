@@ -50,6 +50,14 @@ class TwoTowerRanking(nn.Module):
         joint = torch.cat([user_emb, item_emb, user_emb * item_emb, torch.abs(user_emb - item_emb)], dim=-1)
         return self.scorer(joint).squeeze(-1)
 
+    def get_topk_scores(
+        self,
+        feature_store,
+        k: int,
+        seen_user_item_map: Optional[Dict[int, List[int]]] = None,
+    ) -> torch.Tensor:
+        return _get_topk_scores_by_model_scoring(self, feature_store, k, seen_user_item_map)
+
     def compute_loss(self, batch: Dict[str, torch.Tensor]) -> torch.Tensor:
         labels = batch["label"]
         logits = self.forward(batch)
@@ -132,6 +140,14 @@ class DLRM(nn.Module):
             joint = torch.cat(features_list + [interactions], dim=1)
 
         return self.mlp(joint).squeeze(-1)
+
+    def get_topk_scores(
+        self,
+        feature_store,
+        k: int,
+        seen_user_item_map: Optional[Dict[int, List[int]]] = None,
+    ) -> torch.Tensor:
+        return _get_topk_scores_by_model_scoring(self, feature_store, k, seen_user_item_map)
 
     def compute_loss(self, batch: Dict[str, torch.Tensor]) -> torch.Tensor:
         labels = batch["label"]
@@ -252,6 +268,74 @@ def load_retrieval_towers(
         if len(loaded_mappings) > max_mappings_to_log:
             remaining = len(loaded_mappings) - max_mappings_to_log
             print(f"[init_from_retrieval]   ... {remaining} more mappings not shown")
+
+
+def _get_topk_scores_by_model_scoring(
+    model: nn.Module,
+    feature_store,
+    k: int,
+    seen_user_item_map: Optional[Dict[int, List[int]]] = None,
+    item_batch_size: int = 2048,
+) -> torch.Tensor:
+    all_user_features = feature_store.get_all_user_features()
+    all_item_features = feature_store.get_all_item_features()
+    user_ids = feature_store.get_all_user_ids()
+
+    num_users = user_ids.numel()
+    if num_users == 0:
+        return torch.empty((0, 0), dtype=torch.long)
+
+    num_items = next(iter(all_item_features.values())).shape[0]
+    if num_items == 0:
+        return torch.empty((num_users, 0), dtype=torch.long)
+
+    k = min(int(k), num_items)
+    if k <= 0:
+        return torch.empty((num_users, 0), dtype=torch.long)
+
+    device = next(model.parameters()).device
+    uid_list = user_ids.tolist()
+    uid_to_row = {int(uid): idx for idx, uid in enumerate(uid_list)}
+    seen_indices_map: Dict[int, torch.Tensor] = {}
+    if seen_user_item_map:
+        for uid, seen_item_ids in seen_user_item_map.items():
+            if uid not in uid_to_row or not seen_item_ids:
+                continue
+            seen_tensor = torch.tensor(seen_item_ids, dtype=torch.long)
+            seen_indices_map[uid_to_row[int(uid)]] = feature_store.map_item_ids_to_indices(seen_tensor)
+
+    topk_rows: List[torch.Tensor] = []
+    with torch.no_grad():
+        for row_idx in range(num_users):
+            user_single = {
+                name: tensor[row_idx: row_idx + 1].to(device)
+                for name, tensor in all_user_features.items()
+            }
+            score_chunks: List[torch.Tensor] = []
+            for start in range(0, num_items, item_batch_size):
+                end = min(start + item_batch_size, num_items)
+                item_chunk = {
+                    name: tensor[start:end].to(device)
+                    for name, tensor in all_item_features.items()
+                }
+                repeated_user = {
+                    name: value.repeat(end - start, *([1] * (value.dim() - 1)))
+                    for name, value in user_single.items()
+                }
+                batch = {
+                    **{f"user_{name}": value for name, value in repeated_user.items()},
+                    **{f"item_{name}": value for name, value in item_chunk.items()},
+                }
+                score_chunks.append(model.forward(batch).detach().cpu())
+
+            scores = torch.cat(score_chunks, dim=0)
+            seen_indices = seen_indices_map.get(row_idx)
+            if seen_indices is not None and seen_indices.numel() > 0:
+                scores[seen_indices] = -torch.inf
+
+            topk_rows.append(torch.topk(scores, k).indices)
+
+    return torch.stack(topk_rows, dim=0)
 
 
 RANKING_MODEL_REGISTRY = {
