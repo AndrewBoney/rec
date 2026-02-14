@@ -1,0 +1,204 @@
+# Example configuration demonstrating advanced training options
+# This config shows all available optimizer, scheduler, and early stopping configurations
+
+dataset:
+  name: example
+  paths:
+    users: data/example/users.parquet
+    items: data/example/items.parquet
+    interactions_train: data/example/interactions_train.parquet
+    interactions_val: data/example/interactions_val.parquet
+
+shared:
+  seed: 42
+  encoder_cache: encoders.json
+
+retrieval:
+  columns:
+    user_id: user_id
+    item_id: item_id
+    user_cat_cols:
+      - gender
+      - age_group
+    item_cat_cols:
+      - category
+      - brand
+    interaction_user_col: user_id
+    interaction_item_col: item_id
+
+  model:
+    model_arch: two_tower
+    embedding_dim: 128
+    hidden_dims:
+      - 256
+      - 128
+    dropout: 0.2
+
+  training:
+    batch_size: 8192
+    num_workers: 4
+    max_epochs: 100  # Can set high with early stopping
+
+    # Optimizer configuration (dict form with parameters)
+    optimizer:
+      name: AdamW
+      weight_decay: 0.01
+      betas: [0.9, 0.999]
+      eps: 1e-8
+    lr: 0.001
+
+    # Learning rate scheduler configuration
+    scheduler:
+      name: CosineAnnealingLR
+      T_max: 100
+      eta_min: 1e-6
+      interval: epoch  # Options: "epoch" or "step"
+
+    # Mixed precision training (FP16) for faster training on modern GPUs
+    mixed_precision: true
+
+    # Early stopping configuration
+    early_stopping:
+      enabled: true
+      metric: recall@10      # Metric to monitor
+      patience: 15           # Number of epochs with no improvement
+      mode: max              # Options: "max" or "min"
+      min_delta: 0.0001      # Minimum improvement to count
+
+    temperature: 0.05
+    loss_func: cross_entropy
+    eval_steps: 500
+    log_steps: 100
+    artifact_dir: artifacts/retrieval
+    use_wandb: true
+    wandb_project: rec-example
+    checkpoint: retrieval.ckpt
+
+ranking:
+  columns:
+    user_id: user_id
+    item_id: item_id
+    user_cat_cols:
+      - gender
+      - age_group
+    item_cat_cols:
+      - category
+      - brand
+    interaction_user_col: user_id
+    interaction_item_col: item_id
+    label_col: rating
+
+  model:
+    model_arch: dlrm
+    embedding_dim: 128
+    hidden_dims:
+      - 256
+      - 128
+    scorer_hidden_dims:
+      - 256
+      - 128
+      - 64
+    dropout: 0.3
+
+  training:
+    batch_size: 16384
+    num_workers: 4
+    max_epochs: 100
+
+    # Alternative: SGD optimizer with momentum
+    optimizer:
+      name: SGD
+      momentum: 0.9
+      weight_decay: 0.0001
+      nesterov: true
+    lr: 0.01
+
+    # Alternative scheduler: StepLR
+    scheduler:
+      name: StepLR
+      step_size: 20
+      gamma: 0.5
+      interval: epoch
+
+    # Mixed precision training
+    mixed_precision: true
+
+    # Early stopping for ranking (monitor different metric)
+    early_stopping:
+      enabled: true
+      metric: ndcg@10        # Use ranking metric
+      patience: 12
+      mode: max
+
+    negatives_per_pos: 4
+    loss_func: bce
+    eval_steps: 500
+    log_steps: 100
+    artifact_dir: artifacts/ranking
+    use_wandb: true
+    wandb_project: rec-example
+    checkpoint: ranking.ckpt
+
+# Additional optimizer examples (comment/uncomment as needed):
+#
+# Adam:
+#   optimizer:
+#     name: Adam
+#     weight_decay: 0.0
+#     betas: [0.9, 0.999]
+#
+# RMSprop:
+#   optimizer:
+#     name: RMSprop
+#     alpha: 0.99
+#     momentum: 0.9
+#
+# Simple form (just the name):
+#   optimizer: AdamW  # Uses default parameters
+
+# Additional scheduler examples:
+#
+# ExponentialLR:
+#   scheduler:
+#     name: ExponentialLR
+#     gamma: 0.95
+#
+# OneCycleLR (requires total_steps):
+#   scheduler:
+#     name: OneCycleLR
+#     max_lr: 0.01
+#     total_steps: 10000  # Set based on dataset size and epochs
+#     interval: step  # Must step per training step, not per epoch
+#
+# ReduceLROnPlateau (metric-based):
+#   scheduler:
+#     name: ReduceLROnPlateau
+#     mode: min
+#     factor: 0.1
+#     patience: 3
+#
+# CosineAnnealingWarmRestarts:
+#   scheduler:
+#     name: CosineAnnealingWarmRestarts
+#     T_0: 5
+#     T_mult: 2
+#     eta_min: 1e-6
+
+# Early stopping examples:
+#
+# Simple boolean form (uses defaults):
+#   early_stopping: true
+#
+# Monitor loss (minimize):
+#   early_stopping:
+#     enabled: true
+#     metric: epoch_loss
+#     patience: 10
+#     mode: min
+#     min_delta: 0.001
+#
+# Disable early stopping:
+#   early_stopping: false
+#   # or
+#   early_stopping:
+#     enabled: false

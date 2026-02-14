@@ -74,6 +74,96 @@ def get_scheduler(scheduler_name: str, optimizer: torch.optim.Optimizer, **kwarg
     return scheduler_class(optimizer, **kwargs)
 
 
+class EarlyStopping:
+    """Early stopping to stop training when a monitored metric has stopped improving.
+
+    Args:
+        patience: Number of epochs with no improvement after which training will be stopped
+        mode: One of 'min' or 'max'. In 'min' mode, training will stop when the metric
+              has stopped decreasing; in 'max' mode it will stop when the metric has
+              stopped increasing
+        min_delta: Minimum change in the monitored metric to qualify as an improvement
+        metric_name: Name of the metric to monitor
+    """
+
+    def __init__(
+        self,
+        patience: int = 5,
+        mode: str = "max",
+        min_delta: float = 0.0,
+        metric_name: str = "recall@10",
+    ):
+        self.patience = patience
+        self.mode = mode
+        self.min_delta = min_delta
+        self.metric_name = metric_name
+
+        self.counter = 0
+        self.best_score = None
+        self.best_epoch = 0
+        self.early_stop = False
+        self.best_model_state = None
+
+        if mode not in ["min", "max"]:
+            raise ValueError(f"mode must be 'min' or 'max', got {mode}")
+
+    def __call__(self, metrics: Dict[str, float], epoch: int, model_state: Dict[str, Any]) -> bool:
+        """Check if training should stop and save best model state.
+
+        Args:
+            metrics: Dictionary of validation metrics
+            epoch: Current epoch number
+            model_state: Current model state dict
+
+        Returns:
+            True if training should stop, False otherwise
+        """
+        if self.metric_name not in metrics:
+            return False
+
+        score = metrics[self.metric_name]
+
+        if self.best_score is None:
+            self.best_score = score
+            self.best_epoch = epoch
+            self.best_model_state = {k: v.cpu().clone() for k, v in model_state.items()}
+            return False
+
+        if self.mode == "max":
+            improved = score > self.best_score + self.min_delta
+        else:
+            improved = score < self.best_score - self.min_delta
+
+        if improved:
+            self.best_score = score
+            self.best_epoch = epoch
+            self.best_model_state = {k: v.cpu().clone() for k, v in model_state.items()}
+            self.counter = 0
+        else:
+            self.counter += 1
+            if self.counter >= self.patience:
+                self.early_stop = True
+                return True
+
+        return False
+
+    def state_dict(self) -> Dict[str, Any]:
+        """Return state for checkpointing."""
+        return {
+            "counter": self.counter,
+            "best_score": self.best_score,
+            "best_epoch": self.best_epoch,
+            "early_stop": self.early_stop,
+        }
+
+    def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
+        """Load state from checkpoint."""
+        self.counter = state_dict["counter"]
+        self.best_score = state_dict["best_score"]
+        self.best_epoch = state_dict.get("best_epoch", 0)
+        self.early_stop = state_dict["early_stop"]
+
+
 def build_optimizer_from_args(args: argparse.Namespace, parameters) -> torch.optim.Optimizer:
     """Build optimizer from args, merging config and CLI arguments.
 
@@ -534,6 +624,17 @@ def train(args: argparse.Namespace, stage: str) -> str:
     if use_amp:
         print("Mixed precision training enabled (FP16)")
 
+    # Setup early stopping
+    early_stopping = None
+    if getattr(args, "early_stopping", False):
+        early_stopping = EarlyStopping(
+            patience=getattr(args, "early_stopping_patience", 5),
+            mode=getattr(args, "early_stopping_mode", "max"),
+            min_delta=getattr(args, "early_stopping_min_delta", 0.0),
+            metric_name=getattr(args, "early_stopping_metric", "hit@10"),
+        )
+        print(f"Early stopping enabled: monitoring {early_stopping.metric_name} with patience {early_stopping.patience}")
+
     global_step = 0
     for epoch in range(1, args.max_epochs + 1):
         model.train()
@@ -655,9 +756,23 @@ def train(args: argparse.Namespace, stage: str) -> str:
                 current_lr = optimizer.param_groups[0]["lr"]
                 run.log({"train/lr": current_lr}, step=global_step)
 
+        # Check early stopping
+        if early_stopping and early_stopping(metrics, epoch, model.state_dict()):
+            print(f"Early stopping triggered after epoch {epoch}")
+            print(f"Best {early_stopping.metric_name}: {early_stopping.best_score:.4f} (epoch {early_stopping.best_epoch})")
+            # Restore best model state
+            model.load_state_dict(early_stopping.best_model_state)
+            print(f"Restored model from epoch {early_stopping.best_epoch}")
+            break
+
         # Step scheduler per epoch if configured
         if scheduler and scheduler_interval == "epoch":
             scheduler.step()
+
+    # If early stopping was enabled, restore best model for saving
+    if early_stopping and early_stopping.best_model_state is not None:
+        print(f"Restoring best model from epoch {early_stopping.best_epoch} ({early_stopping.metric_name}={early_stopping.best_score:.4f})")
+        model.load_state_dict(early_stopping.best_model_state)
 
     if args.save_checkpoint:
         torch.save({"state_dict": model.state_dict()}, args.save_checkpoint)
@@ -671,6 +786,13 @@ def train(args: argparse.Namespace, stage: str) -> str:
             "model_arch": getattr(args, "model_arch", "two_tower"),
             "mixed_precision": use_amp,
         }
+        # Add early stopping metadata if it was used
+        if early_stopping and early_stopping.best_model_state is not None:
+            extra_metadata["early_stopping"] = {
+                "best_epoch": early_stopping.best_epoch,
+                "best_score": early_stopping.best_score,
+                "metric": early_stopping.metric_name,
+            }
         if stage == "retrieval":
             extra_metadata["temperature"] = args.temperature
         else:

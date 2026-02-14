@@ -123,6 +123,34 @@ def build_base_parser(description: str) -> argparse.ArgumentParser:
         action="store_true",
         help="Enable mixed precision training (FP16) using torch.cuda.amp",
     )
+    parser.add_argument(
+        "--early-stopping",
+        action="store_true",
+        help="Enable early stopping based on validation metric",
+    )
+    parser.add_argument(
+        "--early-stopping-metric",
+        default="recall@10",
+        help="Metric to monitor for early stopping (default: recall@10)",
+    )
+    parser.add_argument(
+        "--early-stopping-patience",
+        type=int,
+        default=5,
+        help="Number of epochs with no improvement before stopping (default: 5)",
+    )
+    parser.add_argument(
+        "--early-stopping-mode",
+        default="max",
+        choices=["min", "max"],
+        help="Whether to maximize or minimize the metric (default: max)",
+    )
+    parser.add_argument(
+        "--early-stopping-min-delta",
+        type=float,
+        default=0.0,
+        help="Minimum change in metric to qualify as an improvement (default: 0.0)",
+    )
     parser.add_argument("--loss-func", default=None, help="Loss function override (stage-dependent defaults apply)")
     parser.add_argument("--use-wandb", action="store_true", help="Enable Weights & Biases logging")
     parser.add_argument("--wandb-project", default="rec")
@@ -228,6 +256,9 @@ def _flatten_config(cfg: Dict[str, Any], stage: Optional[str] = None) -> Dict[st
     # Handle scheduler config - can be string or dict
     _handle_scheduler_config(merged)
 
+    # Handle early stopping config - can be bool or dict
+    _handle_early_stopping_config(merged)
+
     return merged
 
 
@@ -294,6 +325,36 @@ def _handle_scheduler_config(merged: Dict[str, Any]) -> None:
         if scheduler_kwargs:
             merged["scheduler_kwargs"] = scheduler_kwargs
         merged["scheduler_interval"] = scheduler_interval
+
+
+def _handle_early_stopping_config(merged: Dict[str, Any]) -> None:
+    """Process early stopping config from dict format to args format.
+
+    Converts:
+        early_stopping: {enabled: true, metric: "recall@10", patience: 5, mode: "max"}
+    To:
+        early_stopping: true
+        early_stopping_metric: "recall@10"
+        early_stopping_patience: 5
+        early_stopping_mode: "max"
+    """
+    if "early_stopping" in merged and isinstance(merged["early_stopping"], dict):
+        es_dict = merged["early_stopping"]
+
+        # Extract enabled flag
+        enabled = es_dict.get("enabled", True)
+        merged["early_stopping"] = enabled
+
+        # Only process other fields if enabled
+        if enabled:
+            if "metric" in es_dict:
+                merged["early_stopping_metric"] = es_dict["metric"]
+            if "patience" in es_dict:
+                merged["early_stopping_patience"] = es_dict["patience"]
+            if "mode" in es_dict:
+                merged["early_stopping_mode"] = es_dict["mode"]
+            if "min_delta" in es_dict:
+                merged["early_stopping_min_delta"] = es_dict["min_delta"]
 
 
 def apply_config(args: argparse.Namespace, cfg: Dict[str, Any], stage: Optional[str] = None) -> argparse.Namespace:

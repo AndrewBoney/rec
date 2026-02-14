@@ -38,7 +38,7 @@ retrieval:
   training:
     batch_size: 16384
     num_workers: 0
-    max_epochs: 5
+    max_epochs: 50  # Can run longer with early stopping
     optimizer:
       name: AdamW
       weight_decay: 0.01
@@ -46,10 +46,16 @@ retrieval:
     lr: 0.0005
     scheduler:
       name: CosineAnnealingLR
-      T_max: 5
+      T_max: 50
       eta_min: 0.00001
       interval: epoch
     mixed_precision: true
+    early_stopping:
+      enabled: true
+      metric: recall@10
+      patience: 10
+      mode: max
+      min_delta: 0.0001
     temperature: 0.05
     loss_func: cross_entropy
     eval_steps: 200
@@ -92,7 +98,7 @@ ranking:
   training:
     batch_size: 32768
     num_workers: 0
-    max_epochs: 10
+    max_epochs: 50  # Can run longer with early stopping
     optimizer:
       name: SGD
       momentum: 0.9
@@ -100,10 +106,15 @@ ranking:
     lr: 0.01
     scheduler:
       name: StepLR
-      step_size: 3
+      step_size: 10
       gamma: 0.5
       interval: epoch
     mixed_precision: true
+    early_stopping:
+      enabled: true
+      metric: ndcg@10
+      patience: 8
+      mode: max
     negatives_per_pos: 0
     loss_func: mse
     eval_steps: 200
