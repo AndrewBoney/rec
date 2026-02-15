@@ -3,9 +3,8 @@ from typing import Any, Dict, Optional
 
 import pandas as pd
 
-from ..common.data import DenseEncoder, FeatureStore, build_feature_store
-from ..common.io import load_model_from_bundle, load_model_from_wandb
-from ..common.utils import FeatureConfig, load_config, read_parquet_batches
+from ..common.data import FeatureStore, build_feature_store, FeatureConfig
+from ..common.io import load_model_from_bundle, load_model_from_wandb, load_config, read_parquet_batches
 from .config import build_data_paths, build_feature_config
 
 

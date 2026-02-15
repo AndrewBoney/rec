@@ -3,6 +3,7 @@ import pytest
 import torch
 import pandas as pd
 from rec.common.data import CategoryEncoder, FeatureConfig, FeatureStore
+from rec.common.io import load_model_from_bundle, save_model_bundle
 from rec.common.model import TowerConfig
 from rec.ranking.model import DLRM, TwoTowerRanking
 from rec.retrieval.model import TwoTowerRetrieval
@@ -210,4 +211,51 @@ def test_ranking_get_topk_scores_from_model_predictions(device):
     assert topk.shape == (2, 2)
     assert torch.all(topk >= 0)
     assert torch.all(topk < 3)
+
+
+@pytest.mark.unit
+def test_load_model_from_bundle_uses_model_arch_class_name(temp_dir, feature_config, encoders, cardinalities):
+    user_encoders, item_encoders = encoders
+    user_cardinalities, item_cardinalities = cardinalities
+
+    tower_config = TowerConfig(
+        embedding_dim=8,
+        hidden_dims=[16, 8],
+        dropout=0.1,
+    )
+
+    model = DLRM(
+        user_cardinalities=user_cardinalities,
+        item_cardinalities=item_cardinalities,
+        tower_config=tower_config,
+        user_dense_features=feature_config.user_dense_cols,
+        item_dense_features=feature_config.item_dense_cols,
+    )
+
+    bundle_dir = temp_dir / "ranking_bundle"
+    save_model_bundle(
+        output_dir=bundle_dir,
+        stage="ranking",
+        model_state=model.state_dict(),
+        feature_cfg=feature_config,
+        user_encoders=user_encoders,
+        item_encoders=item_encoders,
+        tower_cfg=tower_config,
+        extra_metadata={
+            "user_cardinalities": user_cardinalities,
+            "item_cardinalities": item_cardinalities,
+            "model_arch": "DLRM",
+            "loss_func": "binary_cross_entropy",
+        },
+    )
+
+    loaded_model, metadata, _, _ = load_model_from_bundle(bundle_dir)
+
+    assert isinstance(loaded_model, DLRM)
+    assert metadata["model_arch"] == "DLRM"
+
+    original_state = model.state_dict()
+    loaded_state = loaded_model.state_dict()
+    for key in original_state:
+        torch.testing.assert_close(loaded_state[key], original_state[key])
 

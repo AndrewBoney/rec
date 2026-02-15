@@ -1,8 +1,7 @@
 import argparse
 from typing import Any, Dict
 
-from ..common.data import DataPaths
-from ..common.utils import FeatureConfig
+from ..common.data import DataPaths, FeatureConfig
 
 
 def build_feature_config(cfg: Dict[str, Any], stage: str) -> FeatureConfig:

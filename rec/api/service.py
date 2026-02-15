@@ -5,7 +5,7 @@ from typing import Any, Dict, Optional
 import numpy as np
 import torch
 
-from ..common.utils import to_device as to_device_tensors
+from ..common.data import to_device as to_device_tensors
 from ..ranking.model import TwoTowerRanking
 from ..retrieval.model import TwoTowerRetrieval
 from .assets import LatestInteraction, load_model_assets

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import inspect
 import json
 import os
 from dataclasses import asdict
@@ -146,13 +147,77 @@ def _load_state_dict(checkpoint_path: str) -> Dict[str, torch.Tensor]:
     raise ValueError("Unsupported checkpoint format")
 
 
+def _resolve_model_class(stage: str, model_arch: str | None) -> type[torch.nn.Module]:
+    if stage == "retrieval":
+        from ..retrieval import model as model_module
+        from ..retrieval.model import get_model_class
+    elif stage == "ranking":
+        from ..ranking import model as model_module
+        from ..ranking.model import get_model_class
+    else:
+        raise ValueError(f"Unsupported stage in metadata: {stage}")
+
+    arch = model_arch or "two_tower"
+    try:
+        return get_model_class(arch)
+    except ValueError:
+        pass
+
+    direct_match = getattr(model_module, arch, None)
+    if isinstance(direct_match, type) and issubclass(direct_match, torch.nn.Module):
+        return direct_match
+
+    arch_lower = arch.lower()
+    for name in dir(model_module):
+        candidate = getattr(model_module, name)
+        if (
+            isinstance(candidate, type)
+            and issubclass(candidate, torch.nn.Module)
+            and name.lower() == arch_lower
+        ):
+            return candidate
+
+    raise ValueError(f"Unsupported {stage} model_arch: {arch}")
+
+
+def _build_model_instance(
+    *,
+    stage: str,
+    model_arch: str | None,
+    metadata: Dict[str, Any],
+    tower_cfg: TowerConfig,
+) -> torch.nn.Module:
+    model_cls = _resolve_model_class(stage, model_arch)
+    feature_cfg = metadata.get("feature_config") or {}
+    init_kwargs = {
+        "user_cardinalities": metadata["user_cardinalities"],
+        "item_cardinalities": metadata["item_cardinalities"],
+        "tower_config": tower_cfg,
+        "loss_func": metadata.get("loss_func"),
+        "user_dense_features": feature_cfg.get("user_dense_cols") or [],
+        "item_dense_features": feature_cfg.get("item_dense_cols") or [],
+        "init_temperature": metadata.get("temperature", 0.05),
+        "scorer_hidden_dims": metadata.get("scorer_hidden_dims"),
+    }
+
+    init_sig = inspect.signature(model_cls.__init__)
+    accepts_var_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in init_sig.parameters.values())
+    if accepts_var_kwargs:
+        return model_cls(**init_kwargs)
+
+    supported = {
+        name
+        for name, param in init_sig.parameters.items()
+        if name != "self" and param.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+    }
+    filtered_kwargs = {k: v for k, v in init_kwargs.items() if k in supported}
+    return model_cls(**filtered_kwargs)
+
+
 def load_model_from_bundle(
     bundle_dir: str | Path,
 ) -> Tuple[torch.nn.Module, Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
     """Load a model + encoders from a local bundle directory."""
-    from ..ranking.model import TwoTowerRanking
-    from ..retrieval.model import TwoTowerRetrieval
-
     bundle = load_model_bundle(bundle_dir)
     metadata = bundle["metadata"]
     tower_cfg = TowerConfig(**metadata["tower_config"])
@@ -163,24 +228,12 @@ def load_model_from_bundle(
         raise ValueError("Bundle metadata is missing user/item cardinalities.")
 
     stage = metadata.get("stage")
-    if stage == "retrieval":
-        model = TwoTowerRetrieval(
-            user_cardinalities=user_cardinalities,
-            item_cardinalities=item_cardinalities,
-            tower_config=tower_cfg,
-            init_temperature=metadata.get("temperature", 0.05),
-            loss_func=metadata.get("loss_func"),
-        )
-    elif stage == "ranking":
-        model = TwoTowerRanking(
-            user_cardinalities=user_cardinalities,
-            item_cardinalities=item_cardinalities,
-            tower_config=tower_cfg,
-            scorer_hidden_dims=metadata.get("scorer_hidden_dims"),
-            loss_func=metadata.get("loss_func"),
-        )
-    else:
-        raise ValueError(f"Unsupported stage in metadata: {stage}")
+    model = _build_model_instance(
+        stage=stage,
+        model_arch=metadata.get("model_arch"),
+        metadata=metadata,
+        tower_cfg=tower_cfg,
+    )
 
     state_dict = _load_state_dict(bundle["checkpoint"])
     model.load_state_dict(state_dict)

@@ -4,8 +4,7 @@ from typing import Any, Dict, List
 import chromadb
 import torch
 
-from ..common.utils import FeatureConfig
-from ..common.utils import to_device as to_device_tensors
+from ..common.data import FeatureConfig, to_device as to_device_tensors
 
 
 @dataclass(frozen=True)
