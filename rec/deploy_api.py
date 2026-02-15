@@ -22,7 +22,6 @@ def main() -> None:
         index_config = ChromaIndexConfig(
             path=args.chroma_path,
             retrieval_collection=args.chroma_collection,
-            ranking_collection=args.chroma_ranking_collection,
             batch_size=args.chroma_batch_size,
             rebuild=args.rebuild_index,
             device=args.index_device,
@@ -33,7 +32,6 @@ def main() -> None:
             assets.feature_cfg,
             assets.item_encoders,
             assets.retrieval_model,
-            assets.ranking_model,
         )
         return
 

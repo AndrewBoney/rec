@@ -102,8 +102,13 @@ class RecService:
             k: v.repeat((batch_size,) + (1,) * (v.dim() - 1)) for k, v in user_feats.items()
         }
 
+        batch = {
+            **{f"user_{k}": v for k, v in user_feats_batch.items()},
+            **{f"item_{k}": v for k, v in item_feats.items()},
+        }
+
         with torch.no_grad():
-            scores = self.ranking_model(user_feats_batch, item_feats).cpu().numpy().reshape(-1)
+            scores = self.ranking_model(batch).cpu().numpy().reshape(-1)
 
         order = np.argsort(scores)[::-1]
         recommendations = []

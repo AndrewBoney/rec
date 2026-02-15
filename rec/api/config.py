@@ -46,7 +46,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--chroma-path", default="artifacts/chroma")
     parser.add_argument("--chroma-collection", default="items")
-    parser.add_argument("--chroma-ranking-collection", default="items_ranking")
     parser.add_argument("--chroma-batch-size", type=int, default=2048)
     parser.add_argument("--rebuild-index", action="store_true")
     parser.add_argument("--build-index", action="store_true")
