@@ -60,6 +60,82 @@ class CategoryEncoder:
         return enc
 
 
+class GroupedCategoryEncoder(CategoryEncoder):
+    """Like CategoryEncoder but maps IDs seen fewer than min_count times to a shared tail index.
+
+    Index layout:
+        0       = OOV (ID never seen during training)
+        1 .. N  = head IDs (count >= min_count), one unique index each
+        N + 1   = tail IDs (count <  min_count), shared index
+
+    Fitting is lazy: counts accumulate across multiple fit() calls and indices are
+    only assigned on the first transform() or num_embeddings access.
+    """
+
+    def __init__(self, min_count: int = 5) -> None:
+        super().__init__()
+        self.min_count = min_count
+        self._counts: Dict[str, int] = {}
+        self._finalized: bool = False
+        self._tail_index: int = 0
+
+    def fit(self, values: Iterable) -> None:
+        if self._finalized:
+            raise RuntimeError(
+                "GroupedCategoryEncoder cannot be fit after transform() has been called."
+            )
+        for v in values:
+            str_v = str(v)
+            self._counts[str_v] = self._counts.get(str_v, 0) + 1
+
+    def _finalize(self) -> None:
+        self.mapping = {}
+        for v in sorted(self._counts):  # sorted for stable indices across runs
+            if self._counts[v] >= self.min_count:
+                self.mapping[v] = len(self.mapping) + 1
+        self._tail_index = len(self.mapping) + 1
+        self._finalized = True
+
+    @property
+    def tail_index(self) -> int:
+        if not self._finalized:
+            self._finalize()
+        return self._tail_index
+
+    def transform(self, values: Sequence) -> np.ndarray:
+        if not self._finalized:
+            self._finalize()
+        str_values = [str(v) for v in values]
+        return np.array(
+            [self.mapping.get(v, self._tail_index) for v in str_values],
+            dtype=np.int64,
+        )
+
+    @property
+    def num_embeddings(self) -> int:
+        if not self._finalized:
+            self._finalize()
+        return len(self.mapping) + 2  # 0=OOV, 1..N=head, N+1=tail
+
+    def to_dict(self) -> Dict[str, Any]:
+        if not self._finalized:
+            self._finalize()
+        return {
+            "type": "grouped_category",
+            "mapping": self.mapping,
+            "min_count": self.min_count,
+            "tail_index": self._tail_index,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "GroupedCategoryEncoder":
+        enc = cls(min_count=data.get("min_count", 1))
+        enc.mapping = {str(k): int(v) for k, v in data["mapping"].items()}
+        enc._tail_index = int(data["tail_index"])
+        enc._finalized = True
+        return enc
+
+
 class DenseEncoder:
     def __init__(self) -> None:
         self.mean: float = 0.0
@@ -126,6 +202,7 @@ def build_encoders(
     interactions_path: str,
     feature_cfg: FeatureConfig,
     chunksize: int = 200_000,
+    cat_col_min_counts: Dict[str, int] = {},
 ) -> Tuple[Dict[str, Union[CategoryEncoder, DenseEncoder]],
            Dict[str, Union[CategoryEncoder, DenseEncoder]]]:
     from .io import read_parquet_batches
@@ -133,11 +210,21 @@ def build_encoders(
     user_encoders = {}
     item_encoders = {}
 
-    # Initialize categorical encoders
+    # Initialize categorical encoders.
+    # Default: GroupedCategoryEncoder(min_count=5) for every categorical column.
+    # Override per-column via cat_col_min_counts; set a column to 0 to use CategoryEncoder.
     for col in [feature_cfg.user_id_col] + feature_cfg.user_cat_cols:
-        user_encoders[col] = CategoryEncoder()
+        min_count = cat_col_min_counts.get(col, 5)
+        user_encoders[col] = (
+            CategoryEncoder() if min_count == 0
+            else GroupedCategoryEncoder(min_count=min_count)
+        )
     for col in [feature_cfg.item_id_col] + feature_cfg.item_cat_cols:
-        item_encoders[col] = CategoryEncoder()
+        min_count = cat_col_min_counts.get(col, 5)
+        item_encoders[col] = (
+            CategoryEncoder() if min_count == 0
+            else GroupedCategoryEncoder(min_count=min_count)
+        )
 
     # Initialize dense encoders
     for col in feature_cfg.user_dense_cols:
@@ -191,7 +278,7 @@ class FeatureStore:
         self.user_features = encode_dataframe(user_df, user_encoders, user_cols)
         self.item_features = encode_dataframe(item_df, item_encoders, item_cols)
 
-        # Apply padding once to all features
+        # Apply padding once to all features (index 0 = unknown/OOV)
         self.user_features = {
             k: torch.cat([torch.zeros(1, dtype=v.dtype), v])
             for k, v in self.user_features.items()
@@ -201,27 +288,49 @@ class FeatureStore:
             for k, v in self.item_features.items()
         }
 
-        # Build index
-        user_id_tensor = self.user_features[feature_cfg.user_id_col][1:]
-        item_id_tensor = self.item_features[feature_cfg.item_id_col][1:]
-        self.user_id_tensor = user_id_tensor
-        self.item_id_tensor = item_id_tensor
-        self.user_index: Dict[int, int] = {
-            int(uid): idx + 1 for idx, uid in enumerate(user_id_tensor.tolist())
-        }
-        self.item_index: Dict[int, int] = {
-            int(iid): idx + 1 for idx, iid in enumerate(item_id_tensor.tolist())
-        }
+        # Positional user index: raw user_id string → row position (1-indexed).
+        # This is always a 1-to-1 mapping regardless of how user_id_col is encoded,
+        # so every user gets their own correct feature row even when user_id uses
+        # a GroupedCategoryEncoder (where multiple users share the same embedding index).
+        raw_user_ids = user_df[feature_cfg.user_id_col].astype(str).tolist()
+        self._user_pos_index: Dict[str, int] = {uid: idx + 1 for idx, uid in enumerate(raw_user_ids)}
+        self._user_positions = torch.arange(1, len(raw_user_ids) + 1, dtype=torch.long)
 
-    def get_user_features(self, user_ids: torch.Tensor) -> Dict[str, torch.Tensor]:
-        indices = [self.user_index.get(int(uid), 0) for uid in user_ids.tolist()]
+        # Positional item index: raw item_id string → row position (1-indexed).
+        # Same rationale as user: decouples feature-store row lookup from embedding index,
+        # so item features are always correct even when item_id uses a GroupedCategoryEncoder.
+        raw_item_ids = item_df[feature_cfg.item_id_col].astype(str).tolist()
+        self._item_pos_index: Dict[str, int] = {iid: idx + 1 for idx, iid in enumerate(raw_item_ids)}
+        self._item_positions = torch.arange(1, len(raw_item_ids) + 1, dtype=torch.long)
+        self._raw_item_ids: List[str] = raw_item_ids
+
+    def get_user_features(self, raw_user_ids: Sequence[str]) -> Dict[str, torch.Tensor]:
+        """Look up user features by raw (unencoded) user_id strings.
+
+        Each user gets their own correct feature row regardless of whether the
+        user_id encoder groups sparse users into a shared embedding index.
+        """
+        indices = [self._user_pos_index.get(str(uid), 0) for uid in raw_user_ids]
         indices = torch.tensor(indices, dtype=torch.long)
         return {k: v[indices] for k, v in self.user_features.items()}
 
-    def get_item_features(self, item_ids: torch.Tensor) -> Dict[str, torch.Tensor]:
-        indices = [self.item_index.get(int(iid), 0) for iid in item_ids.tolist()]
+    def get_user_position(self, raw_user_id: str) -> int:
+        """Return the 1-indexed feature store row for a raw user_id. Returns 0 for unknown."""
+        return self._user_pos_index.get(str(raw_user_id), 0)
+
+    def get_item_features(self, raw_item_ids: Sequence[str]) -> Dict[str, torch.Tensor]:
+        """Look up item features by raw (unencoded) item_id strings.
+
+        Each item gets its own correct feature row regardless of whether the
+        item_id encoder groups sparse items into a shared embedding index.
+        """
+        indices = [self._item_pos_index.get(str(iid), 0) for iid in raw_item_ids]
         indices = torch.tensor(indices, dtype=torch.long)
         return {k: v[indices] for k, v in self.item_features.items()}
+
+    def get_item_position(self, raw_item_id: str) -> int:
+        """Return the 1-indexed feature store row for a raw item_id. Returns 0 for unknown."""
+        return self._item_pos_index.get(str(raw_item_id), 0)
 
     def get_all_item_features(self) -> Dict[str, torch.Tensor]:
         return {k: v[1:] for k, v in self.item_features.items()}
@@ -230,16 +339,28 @@ class FeatureStore:
         return {k: v[1:] for k, v in self.user_features.items()}
 
     def get_all_user_ids(self) -> torch.Tensor:
-        return self.user_id_tensor
+        """Return unique user position indices (1..N), one per row in users_df.
+
+        These positions are stable unique identifiers regardless of how user_id
+        is encoded, and are used as keys in user_item_map for evaluation.
+        """
+        return self._user_positions
 
     def get_all_item_ids(self) -> torch.Tensor:
-        return self.item_id_tensor
+        """Return unique item position indices (1..M), one per row in items_df.
 
-    def map_item_ids_to_indices(self, item_ids: torch.Tensor) -> torch.Tensor:
-        indices = [self.item_index.get(int(iid), 0) for iid in item_ids.tolist()]
-        indices = torch.tensor(indices, dtype=torch.long)
-        indices = torch.clamp(indices - 1, min=0)
-        return indices
+        These positions are stable unique identifiers regardless of how item_id
+        is encoded, and are used as keys in user_item_map for evaluation.
+        """
+        return self._item_positions
+
+    def get_all_raw_item_ids(self) -> List[str]:
+        """Return raw (unencoded) item_id strings for all items, in feature store row order."""
+        return self._raw_item_ids
+
+    def map_item_ids_to_indices(self, item_positions: torch.Tensor) -> torch.Tensor:
+        """Convert 1-indexed item positions to 0-indexed feature-matrix row indices."""
+        return torch.clamp(item_positions - 1, min=0)
 
 class InteractionIterableDataset(IterableDataset):
     def __init__(
@@ -281,12 +402,10 @@ class InteractionIterableDataset(IterableDataset):
         from .io import read_parquet_batches
 
         for chunk in read_parquet_batches(self.interactions_path, self.chunksize):
-            user_ids = self.user_encoders[self.feature_cfg.user_id_col].transform(
-                chunk[self.feature_cfg.interaction_user_col].astype(str).tolist()
-            )
-            item_ids = self.item_encoders[self.feature_cfg.item_id_col].transform(
-                chunk[self.feature_cfg.interaction_item_col].astype(str).tolist()
-            )
+            raw_user_ids = chunk[self.feature_cfg.interaction_user_col].astype(str).tolist()
+            raw_item_ids = chunk[self.feature_cfg.interaction_item_col].astype(str).tolist()
+            user_ids = self.user_encoders[self.feature_cfg.user_id_col].transform(raw_user_ids)
+            item_ids = self.item_encoders[self.feature_cfg.item_id_col].transform(raw_item_ids)
             label_col = self.feature_cfg.interaction_label_col
 
             for start in range(0, len(user_ids), self.batch_size):
@@ -294,8 +413,10 @@ class InteractionIterableDataset(IterableDataset):
                 user_ids_t = torch.from_numpy(user_ids[start:end])
                 item_ids_t = torch.from_numpy(item_ids[start:end])
 
-                user_feats = self.feature_store.get_user_features(user_ids_t)
-                item_feats = self.feature_store.get_item_features(item_ids_t)
+                # Look up features by raw id so each user/item gets their own
+                # correct feature row, even when their id uses a GroupedCategoryEncoder.
+                user_feats = self.feature_store.get_user_features(raw_user_ids[start:end])
+                item_feats = self.feature_store.get_item_features(raw_item_ids[start:end])
                 batch = {
                     "user_id": user_ids_t,
                     "item_id": item_ids_t,
@@ -311,9 +432,13 @@ class InteractionIterableDataset(IterableDataset):
                 yield batch
 
                 for _ in range(self.negatives_per_pos):
-                    neg_item_ids = self._sample_negatives(len(user_ids_t))
+                    # item_id_pool contains raw item ID strings; sample and encode
+                    neg_raw_item_ids = self._sample_negatives(len(user_ids_t))
+                    neg_item_ids = self.item_encoders[self.feature_cfg.item_id_col].transform(
+                        neg_raw_item_ids
+                    )
                     neg_item_ids_t = torch.from_numpy(neg_item_ids)
-                    neg_item_feats = self.feature_store.get_item_features(neg_item_ids_t)
+                    neg_item_feats = self.feature_store.get_item_features(neg_raw_item_ids)
                     neg_batch = {
                         "user_id": user_ids_t,
                         "item_id": neg_item_ids_t,

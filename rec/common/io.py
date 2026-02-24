@@ -6,7 +6,7 @@ import json
 import os
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Dict, Iterable, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, Iterable, Optional, Tuple
 
 import pandas as pd
 import pyarrow.parquet as pq
@@ -14,6 +14,12 @@ import torch
 import yaml
 
 from .model import TowerConfig
+
+if TYPE_CHECKING:
+    from .data import CategoryEncoder, DenseEncoder, FeatureConfig, GroupedCategoryEncoder
+
+    # Convenience alias: any encoder type this module reads/writes.
+    EncoderDict = Dict[str, CategoryEncoder | DenseEncoder | GroupedCategoryEncoder]
 
 
 def read_parquet_batches(path: str, batch_size: int) -> Iterable[pd.DataFrame]:
@@ -37,7 +43,7 @@ def load_config(path: str) -> dict:
         return yaml.safe_load(f)
 
 
-def save_encoders(path: str, encoders: Dict[str, Union["CategoryEncoder", "DenseEncoder"]]) -> None:
+def save_encoders(path: str, encoders: EncoderDict) -> None:
     dir_path = os.path.dirname(path)
     if dir_path:
         os.makedirs(dir_path, exist_ok=True)
@@ -46,8 +52,8 @@ def save_encoders(path: str, encoders: Dict[str, Union["CategoryEncoder", "Dense
         json.dump(payload, f)
 
 
-def load_encoders(path: str) -> Dict[str, Union["CategoryEncoder", "DenseEncoder"]]:
-    from .data import CategoryEncoder, DenseEncoder
+def load_encoders(path: str) -> EncoderDict:
+    from .data import CategoryEncoder, DenseEncoder, GroupedCategoryEncoder
 
     with open(path, "r", encoding="utf-8") as f:
         payload = json.load(f)
@@ -56,6 +62,8 @@ def load_encoders(path: str) -> Dict[str, Union["CategoryEncoder", "DenseEncoder
     for k, data in payload.items():
         if isinstance(data, dict) and data.get("type") == "category":
             encoders[k] = CategoryEncoder.from_dict(data)
+        elif isinstance(data, dict) and data.get("type") == "grouped_category":
+            encoders[k] = GroupedCategoryEncoder.from_dict(data)
         elif isinstance(data, dict) and data.get("type") == "dense":
             encoders[k] = DenseEncoder.from_dict(data)
         else:
@@ -71,16 +79,14 @@ def save_model_bundle(
     output_dir: str | Path,
     stage: str,
     model_state: Dict[str, torch.Tensor],
-    feature_cfg: "FeatureConfig",
-    user_encoders: Dict[str, Union["CategoryEncoder", "DenseEncoder"]],
-    item_encoders: Dict[str, Union["CategoryEncoder", "DenseEncoder"]],
+    feature_cfg: FeatureConfig,
+    user_encoders: EncoderDict,
+    item_encoders: EncoderDict,
     tower_cfg,
     extra_metadata: Optional[Dict[str, Any]] = None,
     checkpoint_name: str = "model.pt",
 ) -> Dict[str, Any]:
     """Persist a complete model bundle for later inference or artifact logging."""
-    from .data import CategoryEncoder, DenseEncoder, FeatureConfig
-
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
 
@@ -236,6 +242,11 @@ def load_model_from_bundle(
     )
 
     state_dict = _load_state_dict(bundle["checkpoint"])
+    # Backward compatibility: temperature was added as a trainable nn.Parameter in a later
+    # version; older bundles won't have it in the state_dict.  Inject the value that was
+    # stored in metadata so strict loading still works for everything else.
+    if stage == "retrieval" and "temperature" not in state_dict:
+        state_dict["temperature"] = torch.tensor(float(metadata.get("temperature", 0.05)))
     model.load_state_dict(state_dict)
     model.eval()
 

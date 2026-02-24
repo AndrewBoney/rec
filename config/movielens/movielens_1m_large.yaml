@@ -36,7 +36,7 @@ retrieval:
       - 128
     dropout: 0.2
   training:
-    batch_size: 16384
+    batch_size: 4096
     num_workers: 0
     max_epochs: 50  # Can run longer with early stopping
     optimizer:
@@ -100,9 +100,9 @@ ranking:
     num_workers: 0
     max_epochs: 50  # Can run longer with early stopping
     optimizer:
-      name: SGD
-      momentum: 0.9
-      weight_decay: 0.0001
+      name: AdamW
+      weight_decay: 0.01
+      betas: [0.9, 0.999]
     lr: 0.01
     scheduler:
       name: StepLR

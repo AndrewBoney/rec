@@ -6,6 +6,7 @@ from rec.common.data import (
     CategoryEncoder,
     DenseEncoder,
     FeatureStore,
+    GroupedCategoryEncoder,
 )
 
 
@@ -45,6 +46,48 @@ def test_dense_encoder(dummy_data):
 
 
 @pytest.mark.unit
+def test_grouped_category_encoder():
+    """Test GroupedCategoryEncoder groups low-frequency values into tail index."""
+    enc = GroupedCategoryEncoder(min_count=3)
+
+    # Fit: "a"=5 times, "b"=2 times, "c"=3 times
+    enc.fit(["a"] * 5 + ["b"] * 2 + ["c"] * 3)
+
+    # "a" and "c" meet threshold; "b" does not
+    assert enc.num_embeddings == len(enc.mapping) + 2  # 0=OOV, 1..N=head, N+1=tail
+    assert "a" in enc.mapping
+    assert "c" in enc.mapping
+    assert "b" not in enc.mapping
+
+    encoded = enc.transform(["a", "b", "c", "unknown"])
+    # "a" and "c" → unique head indices
+    assert encoded[0] == enc.mapping["a"]
+    assert encoded[2] == enc.mapping["c"]
+    # "b" → tail index
+    assert encoded[1] == enc.tail_index
+    # "unknown" (OOV) → tail index (same as GroupedCategoryEncoder; OOV seen as tail)
+    assert encoded[3] == enc.tail_index
+
+
+@pytest.mark.unit
+def test_grouped_category_encoder_serialization():
+    """Test GroupedCategoryEncoder round-trips through to_dict / from_dict."""
+    enc = GroupedCategoryEncoder(min_count=2)
+    enc.fit(["x"] * 3 + ["y"] * 1)
+    d = enc.to_dict()
+    assert d["type"] == "grouped_category"
+
+    enc2 = GroupedCategoryEncoder.from_dict(d)
+    assert enc2.min_count == enc.min_count
+    assert enc2.tail_index == enc.tail_index
+    assert enc2.num_embeddings == enc.num_embeddings
+
+    original = enc.transform(["x", "y", "z"])
+    restored = enc2.transform(["x", "y", "z"])
+    assert list(original) == list(restored)
+
+
+@pytest.mark.unit
 def test_encoders_fixture(encoders, feature_config):
     """Test encoders fixture creates all required encoders."""
     user_encoders, item_encoders = encoders
@@ -67,8 +110,8 @@ def test_encoders_fixture(encoders, feature_config):
 @pytest.mark.unit
 def test_feature_store(feature_store):
     """Test FeatureStore lookups work correctly."""
-    # Test user lookup
-    user_features = feature_store.get_user_features(torch.tensor([0, 1, 2]))
+    # Test user lookup by raw string IDs
+    user_features = feature_store.get_user_features(["0", "1", "2"])
     assert len(user_features) > 0
 
     # Check we have all expected feature columns
@@ -81,7 +124,7 @@ def test_feature_store(feature_store):
     assert len(user_features[feature_store.feature_cfg.user_id_col]) == 3
 
     # Test item lookup
-    item_features = feature_store.get_item_features(torch.tensor([0, 1]))
+    item_features = feature_store.get_item_features(["0", "1"])
     assert len(item_features) > 0
 
     assert feature_store.feature_cfg.item_id_col in item_features
@@ -91,3 +134,34 @@ def test_feature_store(feature_store):
         assert col in item_features
 
     assert len(item_features[feature_store.feature_cfg.item_id_col]) == 2
+
+
+@pytest.mark.unit
+def test_feature_store_positional_lookup(dummy_data, feature_config, encoders):
+    """Test that each user gets their own feature row, even with GroupedCategoryEncoder."""
+    from rec.common.data import FeatureStore
+
+    users, items, _ = dummy_data
+    user_encoders, item_encoders = encoders
+
+    # Replace user_id encoder with a GroupedCategoryEncoder that groups most users
+    from rec.common.data import GroupedCategoryEncoder
+    grouped_enc = GroupedCategoryEncoder(min_count=10_000)  # all users become tail
+    grouped_enc.fit(users["user_id"].astype(str).tolist())
+    user_encoders_grouped = dict(user_encoders)
+    user_encoders_grouped["user_id"] = grouped_enc
+
+    store = FeatureStore(users, items, user_encoders_grouped, item_encoders, feature_config)
+
+    # Even though all users share the same user_id embedding index,
+    # each should get their own feature row (different age/gender/country).
+    feats_0 = store.get_user_features([str(users["user_id"].iloc[0])])
+    feats_1 = store.get_user_features([str(users["user_id"].iloc[1])])
+
+    # Positions must differ (one user per row)
+    pos_0 = store.get_user_position(str(users["user_id"].iloc[0]))
+    pos_1 = store.get_user_position(str(users["user_id"].iloc[1]))
+    assert pos_0 != pos_1
+    assert pos_0 != 0
+    assert pos_1 != 0
+

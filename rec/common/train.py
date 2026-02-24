@@ -276,6 +276,13 @@ def load_or_build_encoders(
     users_cache_path = encoder_cache_path + ".users"
     items_cache_path = encoder_cache_path + ".items"
 
+    cat_col_min_counts_raw = getattr(args, "cat_col_min_counts", None) or {}
+    if isinstance(cat_col_min_counts_raw, list):
+        from .config import parse_optimizer_args
+        cat_col_min_counts = {k: int(v) for k, v in parse_optimizer_args(cat_col_min_counts_raw).items()}
+    else:
+        cat_col_min_counts = dict(cat_col_min_counts_raw)
+
     def _build_and_save():
         user_encs, item_encs = build_encoders(
             args.users,
@@ -283,6 +290,7 @@ def load_or_build_encoders(
             args.interactions_train,
             feature_cfg,
             chunksize=args.chunksize,
+            cat_col_min_counts=cat_col_min_counts,
         )
         save_encoders(users_cache_path, user_encs)
         save_encoders(items_cache_path, item_encs)
@@ -299,6 +307,20 @@ def load_or_build_encoders(
         missing_item = [col for col in item_cols if col not in item_encoders]
 
         if not missing_user and not missing_item:
+            # Invalidate cache if grouping settings changed vs. what was cached.
+            from .data import GroupedCategoryEncoder
+            all_cat_cols = (
+                [feature_cfg.user_id_col] + feature_cfg.user_cat_cols
+                + [feature_cfg.item_id_col] + feature_cfg.item_cat_cols
+            )
+            all_encoders = {**user_encoders, **item_encoders}
+            for col in all_cat_cols:
+                expected_min = cat_col_min_counts.get(col, 5)
+                enc = all_encoders.get(col)
+                cached_is_grouped = isinstance(enc, GroupedCategoryEncoder)
+                cached_min = getattr(enc, "min_count", 0) if cached_is_grouped else 0
+                if (expected_min != 0) != cached_is_grouped or cached_min != expected_min:
+                    return _build_and_save()
             return user_encoders, item_encoders
 
     return _build_and_save()
@@ -316,21 +338,27 @@ def build_paths(args) -> DataPaths:
 def build_user_item_map(
     interactions_path: str,
     feature_cfg: FeatureConfig,
-    user_encoders: Dict[str, CategoryEncoder],
-    item_encoders: Dict[str, CategoryEncoder],
+    feature_store: FeatureStore,
     chunksize: int = 200_000,
 ) -> Dict[int, List[int]]:
+    """Build a map from user position → list of item positions.
+
+    Both keys and values use 1-indexed feature store row positions so that
+    every user and item — including those with a shared embedding index from
+    GroupedCategoryEncoder — can be evaluated individually.
+    """
     user_to_items: Dict[int, set[int]] = {}
     for chunk in read_parquet_batches(interactions_path, chunksize):
-        user_ids = user_encoders[feature_cfg.user_id_col].transform(
-            chunk[feature_cfg.interaction_user_col].astype(str).tolist()
-        )
-        item_ids = item_encoders[feature_cfg.item_id_col].transform(
-            chunk[feature_cfg.interaction_item_col].astype(str).tolist()
-        )
-        for uid, iid in zip(user_ids, item_ids):
-            bucket = user_to_items.setdefault(int(uid), set())
-            bucket.add(int(iid))
+        raw_user_ids = chunk[feature_cfg.interaction_user_col].astype(str).tolist()
+        raw_item_ids = chunk[feature_cfg.interaction_item_col].astype(str).tolist()
+        for raw_uid, raw_iid in zip(raw_user_ids, raw_item_ids):
+            user_pos = feature_store.get_user_position(raw_uid)
+            if user_pos == 0:
+                continue  # user not in feature store, skip
+            item_pos = feature_store.get_item_position(raw_iid)
+            if item_pos == 0:
+                continue  # item not in feature store, skip
+            user_to_items.setdefault(user_pos, set()).add(item_pos)
     return {uid: sorted(items) for uid, items in user_to_items.items()}
 
 
@@ -399,11 +427,11 @@ def _map_user_items_to_indices(
     feature_store: FeatureStore,
 ) -> Dict[int, torch.Tensor]:
     mapped: Dict[int, torch.Tensor] = {}
-    for uid, items in user_item_map.items():
-        if not items:
+    for uid, item_positions in user_item_map.items():
+        if not item_positions:
             continue
-        item_ids = torch.tensor(items, dtype=torch.long)
-        mapped[uid] = feature_store.map_item_ids_to_indices(item_ids)
+        positions = torch.tensor(item_positions, dtype=torch.long)
+        mapped[uid] = feature_store.map_item_ids_to_indices(positions)
     return mapped
 
 
@@ -603,15 +631,13 @@ def train(args: argparse.Namespace, stage: str) -> str:
     val_user_item_map = build_user_item_map(
         paths.interactions_val_path,
         feature_cfg,
-        user_encoders,
-        item_encoders,
+        feature_store=feature_store,
         chunksize=args.chunksize,
     )
     train_user_item_map = build_user_item_map(
         paths.interactions_train_path,
         feature_cfg,
-        user_encoders,
-        item_encoders,
+        feature_store=feature_store,
         chunksize=args.chunksize,
     )
 
