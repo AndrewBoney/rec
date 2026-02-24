@@ -65,9 +65,9 @@ class RecService:
         if user_id not in self.latest_interactions:
             logger.warning(f"User not found in interactions: {user_id}")
             return {"error": f"User '{user_id}' not found in interactions_train"}
-        if user_id not in self.user_id_encoder.mapping:
-            logger.warning(f"User not found in encoders: {user_id}")
-            return {"error": f"User '{user_id}' not found in user encoders"}
+        if self.feature_store.get_user_position(user_id) == 0:
+            logger.warning(f"User not found in feature store: {user_id}")
+            return {"error": f"User '{user_id}' not found in feature store"}
 
         latest_interaction = self.latest_interactions[user_id]
         user_feats = self.feature_store.get_user_features([user_id])
