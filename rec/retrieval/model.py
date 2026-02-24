@@ -53,39 +53,54 @@ class TwoTowerRetrieval(nn.Module):
         feature_store,
         k: int,
         seen_user_item_map: Optional[Dict[int, List[int]]] = None,
+        user_batch_size: int = 2048,
     ) -> torch.Tensor:
         all_user_features = feature_store.get_all_user_features()
         all_item_features = feature_store.get_all_item_features()
         user_ids = feature_store.get_all_user_ids()
 
+        num_users = user_ids.numel()
         num_items = next(iter(all_item_features.values())).shape[0]
         if num_items == 0:
-            return torch.empty((user_ids.numel(), 0), dtype=torch.long)
+            return torch.empty((num_users, 0), dtype=torch.long)
         k = min(int(k), num_items)
         if k <= 0:
-            return torch.empty((user_ids.numel(), 0), dtype=torch.long)
+            return torch.empty((num_users, 0), dtype=torch.long)
 
         device = next(self.parameters()).device
-        all_user_features = {name: tensor.to(device) for name, tensor in all_user_features.items()}
-        all_item_features = {name: tensor.to(device) for name, tensor in all_item_features.items()}
 
+        # Build seen-item index map once on CPU
+        uid_list = user_ids.tolist()
+        uid_to_row = {int(uid): idx for idx, uid in enumerate(uid_list)}
+        seen_indices_map: Dict[int, torch.Tensor] = {}
+        if seen_user_item_map:
+            for uid, seen_item_ids in seen_user_item_map.items():
+                row = uid_to_row.get(int(uid))
+                if row is None or not seen_item_ids:
+                    continue
+                seen_indices_map[row] = feature_store.map_item_ids_to_indices(
+                    torch.tensor(seen_item_ids, dtype=torch.long)
+                )
+
+        # Compute item embeddings once — shared across all user batches
+        all_item_features_dev = {n: t.to(device) for n, t in all_item_features.items()}
         with torch.no_grad():
-            user_emb = self.user_tower(all_user_features)
-            item_emb = self.item_tower(all_item_features)
-            scores = (user_emb @ item_emb.T) / self.temperature
+            item_emb = self.item_tower(all_item_features_dev)  # [num_items, D]
 
-            if seen_user_item_map:
-                uid_to_row = {int(uid): idx for idx, uid in enumerate(user_ids.tolist())}
-                for uid, seen_item_ids in seen_user_item_map.items():
-                    row_idx = uid_to_row.get(int(uid))
-                    if row_idx is None or not seen_item_ids:
-                        continue
-                    seen_tensor = torch.tensor(seen_item_ids, dtype=torch.long)
-                    seen_indices = feature_store.map_item_ids_to_indices(seen_tensor)
-                    if seen_indices.numel() > 0:
-                        scores[row_idx, seen_indices.to(scores.device)] = -torch.inf
+        topk_chunks: List[torch.Tensor] = []
+        with torch.no_grad():
+            for start in range(0, num_users, user_batch_size):
+                end = min(start + user_batch_size, num_users)
+                user_batch = {n: t[start:end].to(device) for n, t in all_user_features.items()}
+                user_emb = self.user_tower(user_batch)
+                scores = (user_emb @ item_emb.T) / self.temperature  # [batch, num_items]
+                for local_i, global_row in enumerate(range(start, end)):
+                    seen_idx = seen_indices_map.get(global_row)
+                    if seen_idx is not None and seen_idx.numel() > 0:
+                        scores[local_i, seen_idx.to(device)] = -torch.inf
+                topk_chunks.append(torch.topk(scores, k, dim=1).indices.cpu())
 
-            return torch.topk(scores, k, dim=1).indices.cpu()
+        return torch.cat(topk_chunks, dim=0)
 
 
 RETRIEVAL_MODEL_REGISTRY = {

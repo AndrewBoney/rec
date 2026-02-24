@@ -156,11 +156,11 @@ def test_model_forward_performance(
     model.eval()
 
     # Create batch
-    user_ids = torch.randint(0, dataset_size["n_users"], (batch_size,))
-    item_ids = torch.randint(0, dataset_size["n_items"], (batch_size,))
+    raw_user_ids = [str(v.item()) for v in torch.randint(0, dataset_size["n_users"], (batch_size,))]
+    raw_item_ids = [str(v.item()) for v in torch.randint(0, dataset_size["n_items"], (batch_size,))]
 
-    user_features = feature_store.get_user_features(user_ids)
-    item_features = feature_store.get_item_features(item_ids)
+    user_features = feature_store.get_user_features(raw_user_ids)
+    item_features = feature_store.get_item_features(raw_item_ids)
 
     batch = {
         **{f"user_{k}": v for k, v in user_features.items()},

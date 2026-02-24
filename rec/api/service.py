@@ -65,13 +65,12 @@ class RecService:
         if user_id not in self.latest_interactions:
             logger.warning(f"User not found in interactions: {user_id}")
             return {"error": f"User '{user_id}' not found in interactions_train"}
-        if user_id not in self.user_id_encoder.mapping:
-            logger.warning(f"User not found in encoders: {user_id}")
-            return {"error": f"User '{user_id}' not found in user encoders"}
+        if self.feature_store.get_user_position(user_id) == 0:
+            logger.warning(f"User not found in feature store: {user_id}")
+            return {"error": f"User '{user_id}' not found in feature store"}
 
         latest_interaction = self.latest_interactions[user_id]
-        user_encoded = int(self.user_id_encoder.transform([user_id])[0])
-        user_feats = self.feature_store.get_user_features(torch.tensor([user_encoded], dtype=torch.long))
+        user_feats = self.feature_store.get_user_features([user_id])
         user_feats = to_device_tensors(user_feats, self.device)
 
         with torch.no_grad():
@@ -92,12 +91,10 @@ class RecService:
                 "recommendations": [],
             }
 
-        encoded_items = self.item_id_encoder.transform(results.ids)
-        item_ids_t = torch.tensor(encoded_items, dtype=torch.long)
-        item_feats = self.feature_store.get_item_features(item_ids_t)
+        item_feats = self.feature_store.get_item_features(results.ids)
         item_feats = to_device_tensors(item_feats, self.device)
 
-        batch_size = item_ids_t.size(0)
+        batch_size = len(results.ids)
         user_feats_batch = {
             k: v.repeat((batch_size,) + (1,) * (v.dim() - 1)) for k, v in user_feats.items()
         }

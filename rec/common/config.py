@@ -79,6 +79,18 @@ def build_base_parser(description: str) -> argparse.ArgumentParser:
     parser.add_argument("--interaction-label-col", default=None)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--encoder-cache", default="encoders.json")
+    parser.add_argument(
+        "--cat-col-min-counts",
+        nargs="*",
+        default=[],
+        help=(
+            "Per-column minimum occurrence count for the GroupedCategoryEncoder. "
+            "All categorical columns default to min_count=5 (GroupedCategoryEncoder). "
+            "Set a column to 0 to disable grouping and use a plain CategoryEncoder instead. "
+            "Specify as col=count pairs, e.g. --cat-col-min-counts user_id=10 genre=0. "
+            "Applies to any user or item categorical column."
+        ),
+    )
     parser.add_argument("--batch-size", type=int, default=1024)
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--chunksize", type=int, default=None)

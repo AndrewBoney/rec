@@ -28,8 +28,8 @@ def test_retrieval_model_forward(cardinalities, feature_store, device):
     ).to(device)
 
     # Create dummy batch - features WITHOUT prefixes for forward()
-    user_features = feature_store.get_user_features(torch.tensor([0, 1, 2]))
-    item_features = feature_store.get_item_features(torch.tensor([0, 1, 2]))
+    user_features = feature_store.get_user_features(["0", "1", "2"])
+    item_features = feature_store.get_item_features(["0", "1", "2"])
 
     # Move to device
     batch = {
@@ -65,8 +65,8 @@ def test_ranking_two_tower_forward(cardinalities, feature_store, device):
     ).to(device)
 
     # Create dummy batch - features WITHOUT prefixes for forward()
-    user_features = feature_store.get_user_features(torch.tensor([0, 1]))
-    item_features = feature_store.get_item_features(torch.tensor([0, 1]))
+    user_features = feature_store.get_user_features(["0", "1"])
+    item_features = feature_store.get_item_features(["0", "1"])
 
     # Move to device
     batch = {
@@ -102,8 +102,8 @@ def test_dlrm_forward(cardinalities, feature_store, device):
     ).to(device)
 
     # Create dummy batch - DLRM expects features WITHOUT prefixes
-    user_features = feature_store.get_user_features(torch.tensor([0, 1]))
-    item_features = feature_store.get_item_features(torch.tensor([0, 1]))
+    user_features = feature_store.get_user_features(["0", "1"])
+    item_features = feature_store.get_item_features(["0", "1"])
 
     # Move to device
     batch = {
@@ -140,8 +140,8 @@ def test_model_backward_pass(cardinalities, feature_store, device):
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 
     # Create batch
-    user_features = feature_store.get_user_features(torch.tensor([0, 1]))
-    item_features = feature_store.get_item_features(torch.tensor([0, 1]))
+    user_features = feature_store.get_user_features(["0", "1"])
+    item_features = feature_store.get_item_features(["0", "1"])
 
     batch = {
         **{f"user_{k}": v.to(device) for k, v in user_features.items()},

@@ -23,7 +23,7 @@ def build_ranking_dataloader(
         user_encoders,
         item_encoders,
     )
-    item_id_pool = feature_store.get_all_item_ids().cpu().numpy().astype(np.int64, copy=False)
+    item_id_pool = np.array(feature_store.get_all_raw_item_ids())
 
     dataset = InteractionIterableDataset(
         interactions_path=paths.interactions_train_path,
