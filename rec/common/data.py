@@ -106,10 +106,18 @@ class GroupedCategoryEncoder(CategoryEncoder):
         if not self._finalized:
             self._finalize()
         str_values = [str(v) for v in values]
-        return np.array(
-            [self.mapping.get(v, self._tail_index) for v in str_values],
-            dtype=np.int64,
-        )
+        indices: List[int] = []
+        for v in str_values:
+            if v in self.mapping:
+                # Head category.
+                indices.append(self.mapping[v])
+            elif v in self._counts:
+                # Seen during fit but below min_count -> tail bucket.
+                indices.append(self._tail_index)
+            else:
+                # Never seen (true OOV).
+                indices.append(0)
+        return np.array(indices, dtype=np.int64)
 
     @property
     def num_embeddings(self) -> int:
@@ -120,11 +128,13 @@ class GroupedCategoryEncoder(CategoryEncoder):
     def to_dict(self) -> Dict[str, Any]:
         if not self._finalized:
             self._finalize()
+        tail_values = [v for v in self._counts if v not in self.mapping]
         return {
             "type": "grouped_category",
             "mapping": self.mapping,
             "min_count": self.min_count,
             "tail_index": self._tail_index,
+            "tail_values": tail_values,
         }
 
     @classmethod
@@ -132,6 +142,10 @@ class GroupedCategoryEncoder(CategoryEncoder):
         enc = cls(min_count=data.get("min_count", 1))
         enc.mapping = {str(k): int(v) for k, v in data["mapping"].items()}
         enc._tail_index = int(data["tail_index"])
+        # Restore _counts so that transform can distinguish tail from true OOV.
+        enc._counts = {str(k): enc.min_count for k in enc.mapping}
+        for v in data.get("tail_values", []):
+            enc._counts[str(v)] = 1
         enc._finalized = True
         return enc
 

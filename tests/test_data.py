@@ -65,8 +65,8 @@ def test_grouped_category_encoder():
     assert encoded[2] == enc.mapping["c"]
     # "b" → tail index
     assert encoded[1] == enc.tail_index
-    # "unknown" (OOV) → tail index (same as GroupedCategoryEncoder; OOV seen as tail)
-    assert encoded[3] == enc.tail_index
+    # "unknown" (OOV) → OOV index
+    assert encoded[3] == enc.unknown_index
 
 
 @pytest.mark.unit
