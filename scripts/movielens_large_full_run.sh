@@ -5,7 +5,7 @@ set -euo pipefail
 # then build the Chroma index and serve the API.
 #
 # Usage:
-#   ./scripts/train_promote_deploy.sh [config_path]
+#   ./scripts/movielens_large_full_run.sh [config_path]
 #
 # Env overrides:
 #   USE_WANDB=true|false (default: true)
