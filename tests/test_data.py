@@ -3,19 +3,18 @@ import pandas as pd
 import pytest
 import torch
 from rec.common.data import (
-    CategoryEncoder,
+    Tokenizer,
     DenseEncoder,
     FeatureStore,
-    GroupedCategoryEncoder,
 )
 
 
 @pytest.mark.unit
 def test_category_encoder(dummy_data):
-    """Test CategoryEncoder creates valid mappings."""
+    """Test Tokenizer creates valid mappings."""
     users, items, interactions = dummy_data
 
-    encoder = CategoryEncoder()
+    encoder = Tokenizer(min_freq=1)
     encoder.fit(users["gender"])
 
     # Check encoding works
@@ -47,8 +46,8 @@ def test_dense_encoder(dummy_data):
 
 @pytest.mark.unit
 def test_grouped_category_encoder():
-    """Test GroupedCategoryEncoder groups low-frequency values into tail index."""
-    enc = GroupedCategoryEncoder(min_count=3)
+    """Test Tokenizer with min_freq groups low-frequency values into tail index."""
+    enc = Tokenizer(min_freq=3)
 
     # Fit: "a"=5 times, "b"=2 times, "c"=3 times
     enc.fit(["a"] * 5 + ["b"] * 2 + ["c"] * 3)
@@ -71,14 +70,14 @@ def test_grouped_category_encoder():
 
 @pytest.mark.unit
 def test_grouped_category_encoder_serialization():
-    """Test GroupedCategoryEncoder round-trips through to_dict / from_dict."""
-    enc = GroupedCategoryEncoder(min_count=2)
+    """Test Tokenizer round-trips through to_dict / from_dict."""
+    enc = Tokenizer(min_freq=2)
     enc.fit(["x"] * 3 + ["y"] * 1)
     d = enc.to_dict()
-    assert d["type"] == "grouped_category"
+    assert d["type"] == "tokenizer"
 
-    enc2 = GroupedCategoryEncoder.from_dict(d)
-    assert enc2.min_count == enc.min_count
+    enc2 = Tokenizer.from_dict(d)
+    assert enc2.min_freq == enc.min_freq
     assert enc2.tail_index == enc.tail_index
     assert enc2.num_embeddings == enc.num_embeddings
 
@@ -138,15 +137,14 @@ def test_feature_store(feature_store):
 
 @pytest.mark.unit
 def test_feature_store_positional_lookup(dummy_data, feature_config, encoders):
-    """Test that each user gets their own feature row, even with GroupedCategoryEncoder."""
+    """Test that each user gets their own feature row, even with a tail-bucketing Tokenizer."""
     from rec.common.data import FeatureStore
 
     users, items, _ = dummy_data
     user_encoders, item_encoders = encoders
 
-    # Replace user_id encoder with a GroupedCategoryEncoder that groups most users
-    from rec.common.data import GroupedCategoryEncoder
-    grouped_enc = GroupedCategoryEncoder(min_count=10_000)  # all users become tail
+    # Replace user_id encoder with a Tokenizer that groups most users into the tail
+    grouped_enc = Tokenizer(min_freq=10_000)  # all users become tail
     grouped_enc.fit(users["user_id"].astype(str).tolist())
     user_encoders_grouped = dict(user_encoders)
     user_encoders_grouped["user_id"] = grouped_enc
@@ -164,4 +162,3 @@ def test_feature_store_positional_lookup(dummy_data, feature_config, encoders):
     assert pos_0 != pos_1
     assert pos_0 != 0
     assert pos_1 != 0
-

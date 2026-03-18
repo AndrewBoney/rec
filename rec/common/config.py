@@ -84,10 +84,10 @@ def build_base_parser(description: str) -> argparse.ArgumentParser:
         nargs="*",
         default=[],
         help=(
-            "Per-column minimum occurrence count for the GroupedCategoryEncoder. "
-            "All categorical columns default to min_count=5 (GroupedCategoryEncoder). "
-            "Set a column to 0 to disable grouping and use a plain CategoryEncoder instead. "
-            "Specify as col=count pairs, e.g. --cat-col-min-counts user_id=10 genre=0. "
+            "Per-column minimum frequency for the Tokenizer. "
+            "All categorical columns default to min_freq=5 (low-frequency values share a tail bucket). "
+            "Set a column to 0 or 1 to give every value its own index. "
+            "Specify as col=count pairs, e.g. --cat-col-min-counts user_id=10 genre=1. "
             "Applies to any user or item categorical column."
         ),
     )

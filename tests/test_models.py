@@ -2,7 +2,7 @@
 import pytest
 import torch
 import pandas as pd
-from rec.common.data import CategoryEncoder, FeatureConfig, FeatureStore
+from rec.common.data import Tokenizer, FeatureConfig, FeatureStore
 from rec.common.io import load_model_from_bundle, save_model_bundle
 from rec.common.model import TowerConfig
 from rec.ranking.model import DLRM, TwoTowerRanking
@@ -176,12 +176,12 @@ def test_ranking_get_topk_scores_from_model_predictions(device):
     items = pd.DataFrame({"item_id": ["i1", "i2", "i3"], "genre": ["a", "b", "a"]})
 
     user_encoders = {
-        "user_id": CategoryEncoder(),
-        "country": CategoryEncoder(),
+        "user_id": Tokenizer(min_freq=1),
+        "country": Tokenizer(min_freq=1),
     }
     item_encoders = {
-        "item_id": CategoryEncoder(),
-        "genre": CategoryEncoder(),
+        "item_id": Tokenizer(min_freq=1),
+        "genre": Tokenizer(min_freq=1),
     }
     for col, enc in user_encoders.items():
         enc.fit(users[col].tolist())
