@@ -31,121 +31,88 @@ class FeatureConfig:
             self.item_dense_cols = []
 
 
-class CategoryEncoder:
-    def __init__(self) -> None:
-        self.mapping: Dict[str, int] = {}
-        self.unknown_index: int = 0
+class Tokenizer:
+    """Maps categorical values to integer indices.
 
-    def fit(self, values: Iterable) -> None:
-        for v in values:
-            str_v = str(v)
-            if str_v not in self.mapping:
-                self.mapping[str_v] = len(self.mapping) + 1
+    min_freq <= 1: every value gets its own index (0=OOV, 1..N=values)
+    min_freq > 1:  low-frequency values share a tail bucket
+                   (0=OOV, 1..N=head, N+1=tail)
 
-    def transform(self, values: Sequence) -> np.ndarray:
-        str_values = [str(v) for v in values]
-        return np.array([self.mapping.get(v, self.unknown_index) for v in str_values], dtype=np.int64)
-
-    @property
-    def num_embeddings(self) -> int:
-        return len(self.mapping) + 1
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {"type": "category", "mapping": self.mapping}
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "CategoryEncoder":
-        enc = cls()
-        enc.mapping = {str(k): int(v) for k, v in data["mapping"].items()}
-        return enc
-
-
-class GroupedCategoryEncoder(CategoryEncoder):
-    """Like CategoryEncoder but maps IDs seen fewer than min_count times to a shared tail index.
-
-    Index layout:
-        0       = OOV (ID never seen during training)
-        1 .. N  = head IDs (count >= min_count), one unique index each
-        N + 1   = tail IDs (count <  min_count), shared index
-
-    Fitting is lazy: counts accumulate across multiple fit() calls and indices are
-    only assigned on the first transform() or num_embeddings access.
+    Fitting is lazy: counts accumulate across multiple fit() calls and indices
+    are only assigned on the first transform() or num_embeddings access.
     """
 
-    def __init__(self, min_count: int = 5) -> None:
-        super().__init__()
-        self.min_count = min_count
+    def __init__(self, min_freq: int = 1) -> None:
+        self.min_freq = min_freq
+        self.unknown_index: int = 0
         self._counts: Dict[str, int] = {}
+        self.mapping: Dict[str, int] = {}
         self._finalized: bool = False
-        self._tail_index: int = 0
+        self._tail_index: Optional[int] = None
 
     def fit(self, values: Iterable) -> None:
         if self._finalized:
-            raise RuntimeError(
-                "GroupedCategoryEncoder cannot be fit after transform() has been called."
-            )
+            raise RuntimeError("Tokenizer cannot be fit after transform() has been called.")
         for v in values:
-            str_v = str(v)
-            self._counts[str_v] = self._counts.get(str_v, 0) + 1
+            s = str(v)
+            self._counts[s] = self._counts.get(s, 0) + 1
 
     def _finalize(self) -> None:
+        threshold = max(self.min_freq, 1)
         self.mapping = {}
         for v in sorted(self._counts):  # sorted for stable indices across runs
-            if self._counts[v] >= self.min_count:
+            if self._counts[v] >= threshold:
                 self.mapping[v] = len(self.mapping) + 1
-        self._tail_index = len(self.mapping) + 1
+        if self.min_freq > 1:
+            self._tail_index = len(self.mapping) + 1
         self._finalized = True
 
     @property
     def tail_index(self) -> int:
         if not self._finalized:
             self._finalize()
+        if self._tail_index is None:
+            raise AttributeError("tail_index is only defined when min_freq > 1")
         return self._tail_index
 
     def transform(self, values: Sequence) -> np.ndarray:
         if not self._finalized:
             self._finalize()
-        str_values = [str(v) for v in values]
-        indices: List[int] = []
-        for v in str_values:
+        out: List[int] = []
+        for v in [str(x) for x in values]:
             if v in self.mapping:
-                # Head category.
-                indices.append(self.mapping[v])
-            elif v in self._counts:
-                # Seen during fit but below min_count -> tail bucket.
-                indices.append(self._tail_index)
+                out.append(self.mapping[v])
+            elif self._tail_index is not None and v in self._counts:
+                out.append(self._tail_index)  # seen but below threshold
             else:
-                # Never seen (true OOV).
-                indices.append(0)
-        return np.array(indices, dtype=np.int64)
+                out.append(self.unknown_index)  # true OOV
+        return np.array(out, dtype=np.int64)
 
     @property
     def num_embeddings(self) -> int:
         if not self._finalized:
             self._finalize()
-        return len(self.mapping) + 2  # 0=OOV, 1..N=head, N+1=tail
+        return len(self.mapping) + (2 if self._tail_index is not None else 1)
 
     def to_dict(self) -> Dict[str, Any]:
         if not self._finalized:
             self._finalize()
-        tail_values = [v for v in self._counts if v not in self.mapping]
-        return {
-            "type": "grouped_category",
-            "mapping": self.mapping,
-            "min_count": self.min_count,
-            "tail_index": self._tail_index,
-            "tail_values": tail_values,
-        }
+        d: Dict[str, Any] = {"type": "tokenizer", "min_freq": self.min_freq, "mapping": self.mapping}
+        if self._tail_index is not None:
+            d["tail_index"] = self._tail_index
+            d["tail_values"] = [v for v in self._counts if v not in self.mapping]
+        return d
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "GroupedCategoryEncoder":
-        enc = cls(min_count=data.get("min_count", 1))
+    def from_dict(cls, data: Dict[str, Any]) -> "Tokenizer":
+        enc = cls(min_freq=data.get("min_freq", 1))
         enc.mapping = {str(k): int(v) for k, v in data["mapping"].items()}
-        enc._tail_index = int(data["tail_index"])
-        # Restore _counts so that transform can distinguish tail from true OOV.
-        enc._counts = {str(k): enc.min_count for k in enc.mapping}
-        for v in data.get("tail_values", []):
-            enc._counts[str(v)] = 1
+        if "tail_index" in data:
+            enc._tail_index = int(data["tail_index"])
+            # Restore _counts so transform can distinguish tail from true OOV
+            enc._counts = {str(k): enc.min_freq for k in enc.mapping}
+            for v in data.get("tail_values", []):
+                enc._counts[str(v)] = 1
         enc._finalized = True
         return enc
 
@@ -197,7 +164,7 @@ class DenseEncoder:
 
 def encode_dataframe(
     df: pd.DataFrame,
-    encoders: Dict[str, Union[CategoryEncoder, DenseEncoder]],
+    encoders: Dict[str, Union[Tokenizer, DenseEncoder]],
     cols: Sequence[str],
 ) -> Dict[str, torch.Tensor]:
     encoded: Dict[str, torch.Tensor] = {}
@@ -217,28 +184,20 @@ def build_encoders(
     feature_cfg: FeatureConfig,
     chunksize: int = 200_000,
     cat_col_min_counts: Dict[str, int] = {},
-) -> Tuple[Dict[str, Union[CategoryEncoder, DenseEncoder]],
-           Dict[str, Union[CategoryEncoder, DenseEncoder]]]:
+) -> Tuple[Dict[str, Union[Tokenizer, DenseEncoder]],
+           Dict[str, Union[Tokenizer, DenseEncoder]]]:
     from .io import read_parquet_batches
 
     user_encoders = {}
     item_encoders = {}
 
-    # Initialize categorical encoders.
-    # Default: GroupedCategoryEncoder(min_count=5) for every categorical column.
-    # Override per-column via cat_col_min_counts; set a column to 0 to use CategoryEncoder.
+    # Initialize categorical encoders with min_freq.
+    # Defaults to 5 (low-frequency values share a tail bucket).
+    # Set a column to 0 or 1 to give every value its own index.
     for col in [feature_cfg.user_id_col] + feature_cfg.user_cat_cols:
-        min_count = cat_col_min_counts.get(col, 5)
-        user_encoders[col] = (
-            CategoryEncoder() if min_count == 0
-            else GroupedCategoryEncoder(min_count=min_count)
-        )
+        user_encoders[col] = Tokenizer(min_freq=cat_col_min_counts.get(col, 5))
     for col in [feature_cfg.item_id_col] + feature_cfg.item_cat_cols:
-        min_count = cat_col_min_counts.get(col, 5)
-        item_encoders[col] = (
-            CategoryEncoder() if min_count == 0
-            else GroupedCategoryEncoder(min_count=min_count)
-        )
+        item_encoders[col] = Tokenizer(min_freq=cat_col_min_counts.get(col, 5))
 
     # Initialize dense encoders
     for col in feature_cfg.user_dense_cols:
@@ -277,8 +236,8 @@ class FeatureStore:
         self,
         user_df: pd.DataFrame,
         item_df: pd.DataFrame,
-        user_encoders: Dict[str, Union[CategoryEncoder, DenseEncoder]],
-        item_encoders: Dict[str, Union[CategoryEncoder, DenseEncoder]],
+        user_encoders: Dict[str, Union[Tokenizer, DenseEncoder]],
+        item_encoders: Dict[str, Union[Tokenizer, DenseEncoder]],
         feature_cfg: FeatureConfig,
     ) -> None:
         self.feature_cfg = feature_cfg
@@ -305,25 +264,20 @@ class FeatureStore:
         # Positional user index: raw user_id string → row position (1-indexed).
         # This is always a 1-to-1 mapping regardless of how user_id_col is encoded,
         # so every user gets their own correct feature row even when user_id uses
-        # a GroupedCategoryEncoder (where multiple users share the same embedding index).
+        # a Tokenizer with min_freq > 1 (where multiple users share the same embedding index).
         raw_user_ids = user_df[feature_cfg.user_id_col].astype(str).tolist()
         self._user_pos_index: Dict[str, int] = {uid: idx + 1 for idx, uid in enumerate(raw_user_ids)}
         self._user_positions = torch.arange(1, len(raw_user_ids) + 1, dtype=torch.long)
 
         # Positional item index: raw item_id string → row position (1-indexed).
-        # Same rationale as user: decouples feature-store row lookup from embedding index,
-        # so item features are always correct even when item_id uses a GroupedCategoryEncoder.
+        # Same rationale as user: decouples feature-store row lookup from embedding index.
         raw_item_ids = item_df[feature_cfg.item_id_col].astype(str).tolist()
         self._item_pos_index: Dict[str, int] = {iid: idx + 1 for idx, iid in enumerate(raw_item_ids)}
         self._item_positions = torch.arange(1, len(raw_item_ids) + 1, dtype=torch.long)
         self._raw_item_ids: List[str] = raw_item_ids
 
     def get_user_features(self, raw_user_ids: Sequence[str]) -> Dict[str, torch.Tensor]:
-        """Look up user features by raw (unencoded) user_id strings.
-
-        Each user gets their own correct feature row regardless of whether the
-        user_id encoder groups sparse users into a shared embedding index.
-        """
+        """Look up user features by raw (unencoded) user_id strings."""
         indices = [self._user_pos_index.get(str(uid), 0) for uid in raw_user_ids]
         indices = torch.tensor(indices, dtype=torch.long)
         return {k: v[indices] for k, v in self.user_features.items()}
@@ -333,11 +287,7 @@ class FeatureStore:
         return self._user_pos_index.get(str(raw_user_id), 0)
 
     def get_item_features(self, raw_item_ids: Sequence[str]) -> Dict[str, torch.Tensor]:
-        """Look up item features by raw (unencoded) item_id strings.
-
-        Each item gets its own correct feature row regardless of whether the
-        item_id encoder groups sparse items into a shared embedding index.
-        """
+        """Look up item features by raw (unencoded) item_id strings."""
         indices = [self._item_pos_index.get(str(iid), 0) for iid in raw_item_ids]
         indices = torch.tensor(indices, dtype=torch.long)
         return {k: v[indices] for k, v in self.item_features.items()}
@@ -353,19 +303,11 @@ class FeatureStore:
         return {k: v[1:] for k, v in self.user_features.items()}
 
     def get_all_user_ids(self) -> torch.Tensor:
-        """Return unique user position indices (1..N), one per row in users_df.
-
-        These positions are stable unique identifiers regardless of how user_id
-        is encoded, and are used as keys in user_item_map for evaluation.
-        """
+        """Return unique user position indices (1..N), one per row in users_df."""
         return self._user_positions
 
     def get_all_item_ids(self) -> torch.Tensor:
-        """Return unique item position indices (1..M), one per row in items_df.
-
-        These positions are stable unique identifiers regardless of how item_id
-        is encoded, and are used as keys in user_item_map for evaluation.
-        """
+        """Return unique item position indices (1..M), one per row in items_df."""
         return self._item_positions
 
     def get_all_raw_item_ids(self) -> List[str]:
@@ -427,8 +369,6 @@ class InteractionIterableDataset(IterableDataset):
                 user_ids_t = torch.from_numpy(user_ids[start:end])
                 item_ids_t = torch.from_numpy(item_ids[start:end])
 
-                # Look up features by raw id so each user/item gets their own
-                # correct feature row, even when their id uses a GroupedCategoryEncoder.
                 user_feats = self.feature_store.get_user_features(raw_user_ids[start:end])
                 item_feats = self.feature_store.get_item_features(raw_item_ids[start:end])
                 batch = {
@@ -467,8 +407,8 @@ class InteractionIterableDataset(IterableDataset):
 def build_feature_store(
     paths: DataPaths,
     feature_cfg: FeatureConfig,
-    user_encoders: Dict[str, Union[CategoryEncoder, DenseEncoder]],
-    item_encoders: Dict[str, Union[CategoryEncoder, DenseEncoder]],
+    user_encoders: Dict[str, Union[Tokenizer, DenseEncoder]],
+    item_encoders: Dict[str, Union[Tokenizer, DenseEncoder]],
 ) -> FeatureStore:
     from .io import read_table
 

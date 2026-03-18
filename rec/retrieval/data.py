@@ -3,14 +3,14 @@ from __future__ import annotations
 from typing import Dict, Tuple, Union
 from torch.utils.data import DataLoader
 
-from ..common.data import CategoryEncoder, DataPaths, DenseEncoder, FeatureStore, InteractionIterableDataset, build_feature_store, FeatureConfig
+from ..common.data import Tokenizer, DataPaths, DenseEncoder, FeatureStore, InteractionIterableDataset, build_feature_store, FeatureConfig
 
 
 def build_retrieval_dataloader(
     paths: DataPaths,
     feature_cfg: FeatureConfig,
-    user_encoders: Dict[str, Union[CategoryEncoder, DenseEncoder]],
-    item_encoders: Dict[str, Union[CategoryEncoder, DenseEncoder]],
+    user_encoders: Dict[str, Union[Tokenizer, DenseEncoder]],
+    item_encoders: Dict[str, Union[Tokenizer, DenseEncoder]],
     batch_size: int = 1024,
     num_workers: int = 0,
     chunksize: int = 200_000,
