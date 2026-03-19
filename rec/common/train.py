@@ -7,7 +7,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 from tqdm import tqdm
 
 from .data import (
-    CategoryEncoder,
+    Tokenizer,
     DataPaths,
     DenseEncoder,
     FeatureConfig,
@@ -241,21 +241,21 @@ def build_feature_config(args) -> FeatureConfig:
 
 
 def build_cardinalities(
-    encoders: Dict[str, Union[CategoryEncoder, DenseEncoder]],
+    encoders: Dict[str, Union[Tokenizer, DenseEncoder]],
     cols: Iterable[str]
 ) -> Dict[str, int]:
     cardinalities = {}
 
     for col in cols:
         enc = encoders.get(col)
-        if isinstance(enc, CategoryEncoder):
+        if isinstance(enc, Tokenizer):
             cardinalities[col] = enc.num_embeddings
 
     return cardinalities
 
 
 def build_dense_features(
-    encoders: Dict[str, Union[CategoryEncoder, DenseEncoder]],
+    encoders: Dict[str, Union[Tokenizer, DenseEncoder]],
     cols: Iterable[str]
 ) -> List[str]:
     """Extract list of dense feature column names from encoders."""
@@ -270,8 +270,8 @@ def build_dense_features(
 def load_or_build_encoders(
     args,
     feature_cfg: FeatureConfig,
-) -> Tuple[Dict[str, Union[CategoryEncoder, DenseEncoder]],
-           Dict[str, Union[CategoryEncoder, DenseEncoder]]]:
+) -> Tuple[Dict[str, Union[Tokenizer, DenseEncoder]],
+           Dict[str, Union[Tokenizer, DenseEncoder]]]:
     encoder_cache_path = args.encoder_cache
     users_cache_path = encoder_cache_path + ".users"
     items_cache_path = encoder_cache_path + ".items"
@@ -307,19 +307,19 @@ def load_or_build_encoders(
         missing_item = [col for col in item_cols if col not in item_encoders]
 
         if not missing_user and not missing_item:
-            # Invalidate cache if grouping settings changed vs. what was cached.
-            from .data import GroupedCategoryEncoder
+            # Invalidate cache if min_freq settings changed vs. what was cached.
+            from .data import Tokenizer
             all_cat_cols = (
                 [feature_cfg.user_id_col] + feature_cfg.user_cat_cols
                 + [feature_cfg.item_id_col] + feature_cfg.item_cat_cols
             )
             all_encoders = {**user_encoders, **item_encoders}
             for col in all_cat_cols:
-                expected_min = cat_col_min_counts.get(col, 5)
                 enc = all_encoders.get(col)
-                cached_is_grouped = isinstance(enc, GroupedCategoryEncoder)
-                cached_min = getattr(enc, "min_count", 0) if cached_is_grouped else 0
-                if (expected_min != 0) != cached_is_grouped or cached_min != expected_min:
+                if not isinstance(enc, Tokenizer):
+                    return _build_and_save()  # pre-migration cache; rebuild
+                # Normalize: min_freq=0 and min_freq=1 are equivalent (no tail bucket)
+                if max(enc.min_freq, 1) != max(cat_col_min_counts.get(col, 5), 1):
                     return _build_and_save()
             return user_encoders, item_encoders
 
@@ -345,7 +345,7 @@ def build_user_item_map(
 
     Both keys and values use 1-indexed feature store row positions so that
     every user and item — including those with a shared embedding index from
-    GroupedCategoryEncoder — can be evaluated individually.
+    Tokenizer with min_freq > 1 — can be evaluated individually.
     """
     user_to_items: Dict[int, set[int]] = {}
     for chunk in read_parquet_batches(interactions_path, chunksize):
@@ -391,8 +391,8 @@ def save_inference_bundle(
     stage: str,
     model_state: Dict[str, torch.Tensor],
     feature_cfg: FeatureConfig,
-    user_encoders: Dict[str, Union[CategoryEncoder, DenseEncoder]],
-    item_encoders: Dict[str, Union[CategoryEncoder, DenseEncoder]],
+    user_encoders: Dict[str, Union[Tokenizer, DenseEncoder]],
+    item_encoders: Dict[str, Union[Tokenizer, DenseEncoder]],
     tower_cfg,
     extra_metadata: Optional[Dict[str, Any]] = None,
     checkpoint_name: str = "model.pt",

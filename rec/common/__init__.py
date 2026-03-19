@@ -9,7 +9,7 @@ from .config import (
     load_yaml_config,
 )
 from .data import (
-    CategoryEncoder,
+    Tokenizer,
     DataPaths,
     DenseEncoder,
     FeatureConfig,
@@ -34,7 +34,7 @@ __all__ = [
     "apply_dataset_config",
     "apply_shared_config",
     "apply_stage_config",
-    "CategoryEncoder",
+    "Tokenizer",
     "DenseEncoder",
     "FeatureConfig",
     "build_encoders",

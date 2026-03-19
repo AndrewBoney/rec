@@ -93,7 +93,7 @@ def device():
 @pytest.fixture
 def encoders(dummy_data, feature_config):
     """Build encoders from dummy data."""
-    from rec.common.data import CategoryEncoder, DenseEncoder
+    from rec.common.data import Tokenizer, DenseEncoder
 
     users, items, interactions = dummy_data
 
@@ -102,7 +102,7 @@ def encoders(dummy_data, feature_config):
 
     # User categorical encoders
     for col in [feature_config.user_id_col] + feature_config.user_cat_cols:
-        encoder = CategoryEncoder()
+        encoder = Tokenizer(min_freq=1)
         encoder.fit(users[col])
         user_encoders[col] = encoder
 
@@ -114,7 +114,7 @@ def encoders(dummy_data, feature_config):
 
     # Item categorical encoders
     for col in [feature_config.item_id_col] + feature_config.item_cat_cols:
-        encoder = CategoryEncoder()
+        encoder = Tokenizer(min_freq=1)
         encoder.fit(items[col])
         item_encoders[col] = encoder
 
@@ -145,7 +145,7 @@ def feature_store(dummy_data, feature_config, encoders):
 @pytest.fixture
 def cardinalities(encoders):
     """Build cardinality dicts for models (only categorical features)."""
-    from rec.common.data import CategoryEncoder
+    from rec.common.data import Tokenizer
 
     user_encoders, item_encoders = encoders
 
@@ -153,12 +153,12 @@ def cardinalities(encoders):
     user_cardinalities = {
         name: enc.num_embeddings
         for name, enc in user_encoders.items()
-        if isinstance(enc, CategoryEncoder)
+        if isinstance(enc, Tokenizer)
     }
     item_cardinalities = {
         name: enc.num_embeddings
         for name, enc in item_encoders.items()
-        if isinstance(enc, CategoryEncoder)
+        if isinstance(enc, Tokenizer)
     }
 
     return user_cardinalities, item_cardinalities

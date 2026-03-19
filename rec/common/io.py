@@ -16,10 +16,10 @@ import yaml
 from .model import TowerConfig
 
 if TYPE_CHECKING:
-    from .data import CategoryEncoder, DenseEncoder, FeatureConfig, GroupedCategoryEncoder
+    from .data import Tokenizer, DenseEncoder, FeatureConfig
 
     # Convenience alias: any encoder type this module reads/writes.
-    EncoderDict = Dict[str, CategoryEncoder | DenseEncoder | GroupedCategoryEncoder]
+    EncoderDict = Dict[str, Tokenizer | DenseEncoder]
 
 
 def read_parquet_batches(path: str, batch_size: int) -> Iterable[pd.DataFrame]:
@@ -53,23 +53,31 @@ def save_encoders(path: str, encoders: EncoderDict) -> None:
 
 
 def load_encoders(path: str) -> EncoderDict:
-    from .data import CategoryEncoder, DenseEncoder, GroupedCategoryEncoder
+    from .data import Tokenizer, DenseEncoder
 
     with open(path, "r", encoding="utf-8") as f:
         payload = json.load(f)
 
     encoders = {}
     for k, data in payload.items():
-        if isinstance(data, dict) and data.get("type") == "category":
-            encoders[k] = CategoryEncoder.from_dict(data)
-        elif isinstance(data, dict) and data.get("type") == "grouped_category":
-            encoders[k] = GroupedCategoryEncoder.from_dict(data)
-        elif isinstance(data, dict) and data.get("type") == "dense":
+        enc_type = data.get("type") if isinstance(data, dict) else None
+        if enc_type == "tokenizer":
+            encoders[k] = Tokenizer.from_dict(data)
+        elif enc_type == "category":  # backward compat: old CategoryEncoder format
+            encoders[k] = Tokenizer.from_dict({"type": "tokenizer", "min_freq": 1, "mapping": data["mapping"]})
+        elif enc_type == "grouped_category":  # backward compat: old GroupedCategoryEncoder format
+            encoders[k] = Tokenizer.from_dict({
+                "type": "tokenizer", "min_freq": data.get("min_count", 1),
+                "mapping": data["mapping"], "tail_index": data["tail_index"],
+                "tail_values": data.get("tail_values", []),
+            })
+        elif enc_type == "dense":
             encoders[k] = DenseEncoder.from_dict(data)
         else:
-            # Backward compatibility: no type field means CategoryEncoder (old format)
-            enc = CategoryEncoder()
+            # Oldest format: bare mapping dict with no type field
+            enc = Tokenizer(min_freq=1)
             enc.mapping = {str(key): int(value) for key, value in data.items()}
+            enc._finalized = True
             encoders[k] = enc
     return encoders
 

@@ -6,7 +6,7 @@ import pytest
 import torch
 from torch.utils.data import DataLoader
 
-from rec.common.data import CategoryEncoder, DenseEncoder, FeatureStore
+from rec.common.data import Tokenizer, DenseEncoder, FeatureStore
 from rec.common.model import TowerConfig
 from rec.retrieval.model import TwoTowerRetrieval
 
@@ -23,7 +23,7 @@ def test_encoder_build_performance(dummy_data, feature_config, dataset_size, ben
     item_encoders = {}
 
     for col in [feature_config.user_id_col] + feature_config.user_cat_cols:
-        encoder = CategoryEncoder()
+        encoder = Tokenizer(min_freq=1)
         encoder.fit(users[col])
         user_encoders[col] = encoder
 
@@ -33,7 +33,7 @@ def test_encoder_build_performance(dummy_data, feature_config, dataset_size, ben
         user_encoders[col] = encoder
 
     for col in [feature_config.item_id_col] + feature_config.item_cat_cols:
-        encoder = CategoryEncoder()
+        encoder = Tokenizer(min_freq=1)
         encoder.fit(items[col])
         item_encoders[col] = encoder
 
@@ -217,7 +217,7 @@ def test_end_to_end_workflow(
     item_encoders = {}
 
     for col in [feature_config.user_id_col] + feature_config.user_cat_cols:
-        encoder = CategoryEncoder()
+        encoder = Tokenizer(min_freq=1)
         encoder.fit(users[col])
         user_encoders[col] = encoder
 
@@ -227,7 +227,7 @@ def test_end_to_end_workflow(
         user_encoders[col] = encoder
 
     for col in [feature_config.item_id_col] + feature_config.item_cat_cols:
-        encoder = CategoryEncoder()
+        encoder = Tokenizer(min_freq=1)
         encoder.fit(items[col])
         item_encoders[col] = encoder
 
@@ -274,12 +274,12 @@ def test_end_to_end_workflow(
     user_cardinalities = {
         name: enc.num_embeddings
         for name, enc in user_encoders.items()
-        if isinstance(enc, CategoryEncoder)
+        if isinstance(enc, Tokenizer)
     }
     item_cardinalities = {
         name: enc.num_embeddings
         for name, enc in item_encoders.items()
-        if isinstance(enc, CategoryEncoder)
+        if isinstance(enc, Tokenizer)
     }
 
     tower_config = TowerConfig(
